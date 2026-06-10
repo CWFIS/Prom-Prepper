@@ -661,21 +661,7 @@ server <- function(input, output, session){
     # ---- spatial prep ----
     coord <- st_coordinates(point)
     b_4326 <- st_buffer(point, 50000)
-  #  bb_4326 <- st_bbox(b_4326)
-   # b_3978 <- st_transform(b_4326, 3978)
-  #  bb_4326 <- st_bbox(b_4326)
-  #  bb_3978 <- st_bbox(b_3978)
-    
-  #  target_crs <- sf::st_intersection(utm_canada,sf::st_transform(point,sf::st_crs(utm_canada)),)$EPSG
-   # point_target <- st_transform(point, target_crs)
-  #  b_target<- st_buffer(point_target, 50000)
-  #  bb_target<-st_bbox(b_target)
-  #  bb_4326 <- bb_target |>
-  #    st_as_sfc() |>
-  #    st_transform(4326) |>
-  #    st_bbox()
-    
-    
+
     # ---- fuels ----
     if (input$fuel_source == "CWFIS National Grid (2024)") {
       
@@ -687,7 +673,6 @@ server <- function(input, output, session){
       ))
       DEM<-grid_grab(aoi_e = b_4326, output_directory =paste0(base_dir, "/"))
       removeModal()
-      
       
       showNotification("Fuels + DEM clipped successfully", type = "message")
       
@@ -802,6 +787,14 @@ server <- function(input, output, session){
   }
   observeEvent(input$retrieve_models, {
     
+    if (!nzchar(trimws(input$api))) {
+      showNotification(
+        "Please enter your SpotWx API key or save one in your environment variables.",
+        type = "error",
+        duration = 10
+      )
+      return(invisible())
+    }
     withProgress(message = "Running SpotWX + plotting...", value = 0, {
       
       incProgress(0.2, "Getting location")

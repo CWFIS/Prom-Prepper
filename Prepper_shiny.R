@@ -14,8 +14,8 @@
   # wind ninja
   # FWI calculator + graphing
 
-##Write your SpotWx API Key to 
-#Sys.setenv("SPOTWX_API_KEY"="Cv9ZL0YeM17wc3EdMLqYe5Nbl9cnM6Rc")
+##Write your SpotWx API Key to environment vars ONCE
+#Sys.setenv("SPOTWX_API_KEY"="[INSERT SPOTWX API KEY HERE]")
 
 if (!requireNamespace("BurnP3.HelpR", quietly = TRUE)) {
   remotes::install_github("BadgerOnABike/BurnP3.HelpR")
