@@ -1,0 +1,35 @@
+# ============================================================
+# Prometheus Prepper
+# ------------------------------------------------------------
+# Description: Shiny app designed to streamline data collection for 
+  #prometheus FGM. All comments and suggestions welcome!
+# Author: Rachel Dietrich - rachel.dietrich@nrcan-rncan.gc.ca
+# Organization: Canadian Forest Service
+# Repository: https://github.com/CWFIS/Prom_prepper
+# ============================================================
+
+##outstanding to add
+  # wx stations and data 
+  # add FBP/ DEM to map
+  # wind ninja
+  # FWI calculator + graphing
+
+##Write your SpotWx API Key to 
+#Sys.setenv("SPOTWX_API_KEY"="Cv9ZL0YeM17wc3EdMLqYe5Nbl9cnM6Rc")
+
+if (!requireNamespace("BurnP3.HelpR", quietly = TRUE)) {
+  remotes::install_github("BadgerOnABike/BurnP3.HelpR")
+}
+
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+pacman::p_load(
+  shiny, sf, terra, dplyr, lubridate, httr, glue, lutz, ggplot2, leaflet, 
+  cowplot, gridExtra, shinyFiles, fs,plotly, clock, readr, BurnP3.HelpR)
+
+# ---- Load UI/Server ----
+source("functions.R")
+
+# ---- Initiate shiny :) ----
+shinyApp(ui, server)
+
+
