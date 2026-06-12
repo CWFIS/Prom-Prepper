@@ -1,6 +1,6 @@
 # Prometheus Prepper #
 
-A Shiny application for retrieving, displaying and analyzing input data for prometheseus FGM collected for fire locations or user-defined points. 
+A Shiny application for retrieving, displaying and analyzing input data for prometheseus FGM for fire locations or user-defined points. 
 
 This project is in beta, please check for updates often!
 
@@ -12,7 +12,7 @@ Questions, comments and feature suggestions to Rachel Dietrich
 
 1. Select fire location via map click, coordinates, or uploaded perimeter
 
-2. Clips, reprojects and saves Digital Elevation Model either (MRDEM) and FBP fuels from the National Fuel Grid (WCS) or a locally saved FBP raster. 
+2. Clips, reprojects and saves Digital Elevation Model (MRDEM) and FBP fuels from either the National Fuel Grid or a locally saved FBP raster. 
     
    - Fuels source: https://ostrnrcan-dostrncan.canada.ca/entities/publication/fb4eae39-28cb-4e1d-8f56-9879dd78b1f1?fromSearchPage=true
     
