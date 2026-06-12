@@ -4,9 +4,10 @@ A Shiny application for retrieving, displaying and analyzing input data for prom
 
 This project is in beta, please check for updates often!
 
-Questions, comments and feature suggestions to Rachel Dietrich [rachel.dietrich@nrcan-rncan.gc.ca]
+Questions, comments and feature suggestions to Rachel Dietrich 
+- GitHub: https://github.com/Rachel-Dietrich  
+- Email: rachel.dietrich [at] nrcan-rncan [dot] gc [dot] ca
 
-  
 ## Features ##
 
 1. Select fire location via map click, coordinates, or uploaded perimeter
