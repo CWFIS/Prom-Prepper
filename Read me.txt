@@ -36,7 +36,7 @@ All R package requirements are included in the setup code.
 
 ## Run instructions ##
 
-1. Clone repository: 
+1. Clone repository: https://github.com/CWFIS/Prom-Prepper
 2. Open Prom Prepper.Rproj
 3. Open Prepper_shiny.R
 4. Uncomment #Sys.setenv("SPOTWX_API_KEY"="[INSERT SPOTWX API KEY HERE]"), add API key and run [OPTIONAL]
