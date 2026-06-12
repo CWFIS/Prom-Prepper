@@ -15,13 +15,13 @@ Questions, comments and feature suggestions to Rachel Dietrich [rachel.dietrich@
     
 -DEM source: https://open.canada.ca/data/en/dataset/18752265-bda3-498c-a4ba-9dfe68cb98da
     
-3. Retrieves, plots and saves: Fire history (from National Burned Area composite), recent M3 hotspots and M3 perimeters. 
+    3. Retrieves, plots and saves: Fire history (from National Burned Area composite), recent M3 hotspots and M3 perimeters. 
 
 -NBAC: https://cwfis.cfs.nrcan.gc.ca/en/catalogue/results/537a1fd0-698e-4a7b-85a1-e02581ae78b2
 
 -Fire M3: https://cwfis.cfs.nrcan.gc.ca/en/catalogue/results/5b92c253-d40b-41e8-a98b-75c59d11da9e
    
-5. Retrieves, plots and saves available forecasts for point location from SpotWx API
+   5. Retrieves, plots and saves available forecasts for point location from SpotWx API
 
 ## Outputs ##
 - TIFF of FBP and DEM rasters
@@ -44,10 +44,10 @@ All R package requirements are included in the setup code.
 ## Run instructions ##
 
 1. Clone repository: https://github.com/CWFIS/Prom-Prepper
-2. 
 3. Open Prom Prepper.Rproj
 4. Open Prepper_shiny.R
 5. Uncomment LINE 27 add API key and run [OPTIONAL]
+
    Sys.setenv("SPOTWX_API_KEY"="[INSERT SPOTWX API KEY HERE]"), 
 7. Run Lines 29:38 to set up app. 
 8. Run Line 41 to initiate app. 
