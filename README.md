@@ -1,4 +1,4 @@
-### Prometheus Prepper ###
+# Prometheus Prepper #
 
 A Shiny application for retrieving, displaying and analysing input data for prometheseus FGM collected for fire locations or user-defined points. 
 This project is in beta, please check for updates often!
