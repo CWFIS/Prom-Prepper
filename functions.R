@@ -1,4 +1,3 @@
-
 # ---- UI ----
 ui <- fluidPage(
   titlePanel("Prometheus data prepper"),
@@ -57,7 +56,10 @@ ui <- fluidPage(
           "Select Year Range:",
           min = 1972,
           max = as.numeric(format(Sys.Date(), "%Y")),
-          value = c(2020, 2025),
+          value = c(
+            as.numeric(format(Sys.Date(), "%Y")) - 10,
+            as.numeric(format(Sys.Date(), "%Y"))
+          ),
           sep = ""
         )
       ),
@@ -89,7 +91,7 @@ ui <- fluidPage(
       actionButton("save_wcs", "Save selected"),
       hr(),
       
-      h4("SpotWX"),
+      h4("SpotWx"),
       textInput("api", "API Key", value=Sys.getenv("SPOTWX_API_KEY")),
       checkboxGroupInput("models", "Weather Models", choices = NULL),
       actionButton("retrieve_models", "Retrieve models"),
@@ -437,11 +439,31 @@ server <- function(input, output, session){
   # =========================================================
   observeEvent(input$save_wcs, {
     
-    validate(
-      need(nzchar(input$fire_name), "Please enter a fire name."),
-      need(!is.null(output_dir()), "Please select an output folder.")
+    if (!nzchar(input$fire_name)) {
+      showNotification(
+        "Please enter a fire name.",
+        type = "error"
+      )
+      return()
+    }
+    
+    outdir_parsed <- tryCatch(
+      parseDirPath(volumes, input$outdir),
+      error = function(e) NULL
     )
     
+    if (is.null(outdir_parsed) || length(outdir_parsed) == 0) {
+      showNotification("Please select an output folder.", type = "error")
+      return()
+    }
+    
+    if (is.null(point_event())) {
+      showNotification(
+        "Please select a point on the map.",
+        type = "error"
+      )
+      return()
+    }
     base_dir <- output_dir()
     
     out_dir <- file.path(base_dir, "shp_data")
@@ -522,7 +544,9 @@ server <- function(input, output, session){
     # =========================================================
     if (loc == "Map Click") {
       
-      req(input$map_click)
+      if (is.null(input$map_click)) {
+        return(NULL)
+      }
       
       return(
         sf::st_as_sf(
@@ -623,19 +647,20 @@ server <- function(input, output, session){
     return(NULL)
   })
   
-  # --- Fuels 
+  
+  # =========================================================
+  # ------------------ Fuels + DEM --------------------------
+  # =========================================================
    observeEvent(input$clip, {
     
     # ---- user-facing validation ----
     point <- get_point()
     
-    if (is.null(point)) {
-      showNotification("Please select a location first.", type = "error")
-      return()
-    }
-    
     if (!nzchar(input$fire_name)) {
-      showNotification("Please enter a fire name.", type = "error")
+      showNotification(
+        "Please enter a fire name.",
+        type = "error"
+      )
       return()
     }
     
@@ -649,18 +674,31 @@ server <- function(input, output, session){
       return()
     }
     
+    if (is.null(point_event())) {
+      showNotification(
+        "Please select a point on the map.",
+        type = "error"
+      )
+      return()
+    }
+    
+    outdir_parsed <- tryCatch(
+      parseDirPath(volumes, input$outdir),
+      error = function(e) NULL
+    )
+    
+    
     if (input$fuel_source == "Local File" && is.null(fuel_path())) {
       showNotification("Please select a fuel raster.", type = "error")
       return()
     }
     
-    # ---- now safe to use state layer ----
     base_dir <- output_dir()
     dir.create(base_dir, recursive = TRUE, showWarnings = FALSE)
     
     # ---- spatial prep ----
     coord <- st_coordinates(point)
-    b_4326 <- st_buffer(point, 50000)
+    b_4326 <- st_buffer(point, 100000)
 
     # ---- fuels ----
     if (input$fuel_source == "CWFIS National Grid (2024)") {
@@ -685,7 +723,7 @@ server <- function(input, output, session){
       fuels <- terra::rast(fuel_path)
       
       target_crs <- crs(fuels)
-      b_target <- st_transform(b_3978, target_crs)
+      b_target <- st_transform(b_4326, target_crs)
       bb_target <- st_bbox(b_target)
       
       fuels <- crop(fuels, ext(bb_target))
@@ -702,6 +740,9 @@ server <- function(input, output, session){
     }
   })
   
+  # =========================================================
+  # -------------------- Spot Wx ----------------------------
+  # =========================================================
   # ---- Get Spot models ----
   models_available <- reactive({
     req(input$api)
@@ -795,6 +836,15 @@ server <- function(input, output, session){
       )
       return(invisible())
     }
+    
+    if (is.null(point_event())) {
+      showNotification(
+        "Please select a point on the map.",
+        type = "error"
+      )
+      return()
+    }
+      
     withProgress(message = "Running SpotWX + plotting...", value = 0, {
       
       incProgress(0.2, "Getting location")
@@ -828,14 +878,17 @@ server <- function(input, output, session){
         full
       }))
       df$DATETIME <- lubridate::ymd_hm(gsub("/", "-", df$DATETIME))
+      coords <- sf::st_coordinates(get_point())
       
-      
+      df$lon <- coords[1,1]
+      df$lat <- coords[1,2]
       spotwx_df(df)
-      
+
     })
   })
+  
   observeEvent(input$plot_models, {
-    
+
     results <- spotwx_results()
     if (is.null(results)) {
       showNotification("No SpotWX results found. Please retrieve models first.", type = "error")
@@ -844,9 +897,19 @@ server <- function(input, output, session){
     
     req(input$var)
     req(spotwx_df())
-    
     df <- spotwx_df()
+    req(get_point())
     
+    coords_now <- sf::st_coordinates(get_point())
+    
+    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
+      showNotification(
+        "Location has changed. Please re-run 'Retrieve Models'.",
+        type = "error",
+        duration = 6
+      )
+      return()
+    }
     # ---- build ggplots (NOT plotly yet) ----
     plots <- lapply(seq_along(input$var), function(i) {
       
@@ -934,13 +997,46 @@ server <- function(input, output, session){
     })
   })
   observeEvent(input$save_plot, {
+    results <- spotwx_results()
+    if (is.null(results)) {
+      showNotification("No SpotWX results found. Please retrieve models first.", type = "error")
+      return()
+    }
+    df <- spotwx_df()
+    req(df)
+    req(get_point())
     
-    # ---- user-facing validation (messages) ----
-    validate(
-      need(spot_plot_obj(), "Please generate a plot before saving."),
-      need(nzchar(input$fire_name), "Please enter a fire name."),
-      need(!is.null(input$outdir), "Please select an output folder.")
+    if (is.null(spot_plot_obj())) {
+      showNotification("Please generate a plot before saving.", type="error")
+      return()
+    }
+    
+    if (!nzchar(input$fire_name)) {
+      showNotification("Please enter a fire name.", type="error")
+      return()
+    }
+    
+    outdir_parsed <- tryCatch(
+      parseDirPath(volumes, input$outdir),
+      error = function(e) NULL
     )
+    
+    if (is.null(outdir_parsed) || length(outdir_parsed) == 0) {
+      showNotification("Please select an output folder.", type = "error")
+      return()
+    }
+    
+    coords_now <- sf::st_coordinates(get_point())
+    
+    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
+      showNotification(
+        "Location has changed. Please re-run 'Retrieve Models'.",
+        type = "error",
+        duration = 6
+      )
+      return()
+    }
+    
     
     # ---- single source of truth (state layer) ----
     base_dir <- output_dir()
@@ -975,13 +1071,38 @@ server <- function(input, output, session){
   observeEvent(input$save_spotwx, {
     
     results <- spotwx_results()
+    if (is.null(results)) {
+      showNotification("No SpotWX results found. Please retrieve models first.", type = "error")
+      return()
+    }
+    df <- spotwx_df()
+    req(get_point())
     
-    # ---- user-facing validation ----
-    validate(
-      need(!is.null(results), "No SpotWX results found. Please retrieve models first."),
-      need(nzchar(input$fire_name), "Please enter a fire name."),
-      need(!is.null(input$outdir), "Please select an output folder.")
+    if (!nzchar(input$fire_name)) {
+      showNotification("Please enter a fire name.", type="error")
+      return()
+    }
+    
+    outdir_parsed <- tryCatch(
+      parseDirPath(volumes, input$outdir),
+      error = function(e) NULL
     )
+    
+    if (is.null(outdir_parsed) || length(outdir_parsed) == 0) {
+      showNotification("Please select an output folder.", type = "error")
+      return()
+    }
+    
+    coords_now <- sf::st_coordinates(get_point())
+    
+    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
+      showNotification(
+        "Location has changed. Please re-run 'Retrieve Models'.",
+        type = "error",
+        duration = 6
+      )
+      return()
+    }
     
     # ---- single source of truth ----
     base_dir <- output_dir()
@@ -1039,3 +1160,5 @@ server <- function(input, output, session){
   })
   
 }
+
+shinyApp(ui, server)
