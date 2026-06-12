@@ -8,13 +8,16 @@ Questions, comments and feature suggestions to Rachel Dietrich [rachel.dietrich@
 ## Features ##
 
 1.Select fire location via map click, coordinates, or uploaded perimeter
+
 2.Clips, reprojects and saves Digital Elevation Model either (MRDEM) and FBP fuels from the National Fuel Grid (WCS) or a locally saved FBP raster. 
     Fuels source: https://ostrnrcan-dostrncan.canada.ca/entities/publication/fb4eae39-28cb-4e1d-8f56-9879dd78b1f1?fromSearchPage=true
     DEM source: https://open.canada.ca/data/en/dataset/18752265-bda3-498c-a4ba-9dfe68cb98da
+    
 3. Retrieves, plots and saves: Fire history (from National Burned Area composite), recent M3 hotspots and M3 perimeters. 
     NBAC: https://cwfis.cfs.nrcan.gc.ca/en/catalogue/results/537a1fd0-698e-4a7b-85a1-e02581ae78b2
     Fire M3: https://cwfis.cfs.nrcan.gc.ca/en/catalogue/results/5b92c253-d40b-41e8-a98b-75c59d11da9e
-4. Retrieves, plots and saves available forecasts for point location from SpotWx API
+   
+5. Retrieves, plots and saves available forecasts for point location from SpotWx API
 
 ## Outputs ##
 - TIFF of FBP and DEM rasters
