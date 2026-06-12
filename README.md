@@ -71,4 +71,4 @@ All R package requirements are included in the setup code.
    shinyApp(ui, server)
    ```
 
-8. Usage: Instructions are inside the application once it launches.
+8. Usage: App is self explanatory (I hope!)
