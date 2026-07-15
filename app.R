@@ -466,8 +466,13 @@ server <- function(input, output, session){
     }
     base_dir <- output_dir()
     
-    out_dir <- file.path(base_dir, "shp_data")
+    out_dir <- file.path(base_dir,
+                         paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+                         "shp_data")
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(base_dir,
+                         paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+                         "Output"), recursive = TRUE, showWarnings = FALSE)
     
     # NBAC 
     
@@ -641,7 +646,11 @@ server <- function(input, output, session){
       }
       
       # centroid of union
-      return(sf::st_centroid(sf::st_union(fire)))
+      return(
+        if(any(grepl(x = st_geometry_type(fire),pattern = "MULTI|POLYGON"))){sf::st_as_sfc(sf::st_bbox(fire))} 
+        else{
+        sf::st_centroid(sf::st_union(fire))}
+      )
     }
     
     return(NULL)
@@ -695,6 +704,9 @@ server <- function(input, output, session){
     
     base_dir <- output_dir()
     dir.create(base_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(base_dir,
+                         paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+                         "Output"), recursive = TRUE, showWarnings = FALSE)
     
     # ---- spatial prep ----
     coord <- st_coordinates(point)
@@ -1044,11 +1056,15 @@ server <- function(input, output, session){
     # add run-specific folder
     out_dir <- file.path(
       base_dir,
-      paste0(format(Sys.Date(), "%Y%m%d"), "_spotwx")
+      paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+      "spotwx"
     )
     
     # ensure folder exists (safe even if already created)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(base_dir,
+                         paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+                         "Output"), recursive = TRUE, showWarnings = FALSE)
     
     # ---- file path ----
     file_path <- file.path(
@@ -1109,7 +1125,8 @@ server <- function(input, output, session){
     
     out_dir <- file.path(
       base_dir,
-      paste0(format(Sys.Date(), "%Y%m%d"), "_spotwx")
+      paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+      "spotwx"
     )
     
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)

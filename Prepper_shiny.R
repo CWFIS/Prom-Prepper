@@ -34,10 +34,7 @@ pacman::p_load(
   shiny, sf, terra, dplyr, lubridate, httr, glue, lutz, ggplot2, leaflet, 
   cowplot, gridExtra, shinyFiles, fs,plotly, clock, readr, BurnP3.HelpR)
 
-# ---- Load UI/Server ----
-source("functions.R")
-
 # ---- Initiate shiny :) ----
-shinyApp(ui, server)
+runApp()
 
 
