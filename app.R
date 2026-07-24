@@ -88,6 +88,18 @@ ui <- fluidPage(
           step = 1
         )
       ),
+      checkboxInput("save_wx", "Weather Stations", TRUE),
+      conditionalPanel(
+        condition = "input.save_wx == true",
+        sliderInput(
+          "wx_date",
+          "Weather Date",
+          min = Sys.Date()-7,
+          max = Sys.Date()-1,
+          value = Sys.Date()-1,
+          step = 1
+        )
+      ),
       actionButton("save_wcs", "Save selected"),
       hr(),
       
@@ -108,10 +120,29 @@ ui <- fluidPage(
       
       hr(),
       
+      h4("User Starting Codes"),
+      numericInput("user_ffmc",label = "FFMC:", value = ""),
+      numericInput("user_dmc",label = "DMC:", value = ""),
+      numericInput("user_dc",label = "DC:", value = ""),
+      hr(),
+      
+      h4("Starting Code Use"),
+      radioButtons("index_source", "Source:",
+                   choices = c("User Defined", "Nearby Weather Station")),
+      
+      h4("Calculate FWI"),
+      actionButton("calc_fwi","Calculate FWI"),
+      checkboxGroupInput("fwi_var", "FWI Variables",
+                         choices = c("FFMC","DMC","DC","ISI","BUI","FWI"),
+                         selected = c("BUI","FWI"))
+      
     ),
     
     mainPanel(
       leafletOutput("map", height = 400),
+      h2("Starting Codes from Nearby Stations"),
+      DTOutput(outputId = "starting_codes"),
+      h2("Spot Wx Plots"),
       plotlyOutput("spot_plot", height = 600)
     )
   )
@@ -130,6 +161,7 @@ server <- function(input, output, session){
   hotspots_raw <- reactiveVal(NULL)
   perim_raw <- reactiveVal(NULL)
   point_event <- reactiveVal(NULL)
+  wx_raw <- reactiveVal(NULL)
   
   output$spot_plot <- renderPlotly({
     req(spot_plot_obj())
@@ -417,7 +449,7 @@ server <- function(input, output, session){
     perim_raw(perim)
   })
   
-  # ---- FILTER +RENDER ONLY ----
+  # ---- FILTER + RENDER ONLY ----
   perim_filtered <- reactive({
     
     req(perim_raw(), point_event(), input$perim_radius)
@@ -435,7 +467,131 @@ server <- function(input, output, session){
   })
   
   # =========================================================
-  # -------------------- SAVE WCS ---------------------------
+  # -------------------- GET WEATHER ------------------------
+  # =========================================================
+  
+  # ---- DOWNLOAD ONLY (cache) ----
+  observeEvent(point_event(), {
+    
+    req(point_event())
+    
+    bb <- make_bbox(50)$bbox_str
+    
+    wx <- sf::st_read(dsn = 
+                        paste0(
+                          "http://cwfis.cfs.nrcan.gc.ca/geoserver/public/wfs?",
+                          "service=WFS",
+                          "&version=2.0.1",
+                          "&request=GetFeature",
+                          "&typeName=public:firewx_stns",
+                          "&outputFormat=application/json",
+                          "&BBOX=",bb
+                        ),
+                      quiet = TRUE
+    )
+    
+    wx_raw(wx)
+  })
+  
+  # ---- FILTER + RENDER  ----
+  wx_filtered <- reactive({
+    
+    req(wx_raw(), point_event(), input$wx_date)
+  
+    wx <- wx_raw() |>
+      sf::st_transform(3978)
+    
+    wx <- wx[which(format(wx$rep_date,"%Y-%m-%d") == input$wx_date),]
+    
+  })
+  
+  observeEvent(
+    list(wx_filtered(), input$save_wx),
+    {
+      
+      if (!isTRUE(input$save_wx)) {
+        leafletProxy("map") %>%
+          clearGroup("Stations")
+        return()
+      }
+      
+      leafletProxy("map") %>%
+        clearGroup("Stations") %>%
+        addCircleMarkers(
+          data = sf::st_transform(wx_filtered(), 4326),
+          radius = 4,
+          stroke = FALSE,
+          fillOpacity = 0.8,
+          color = "darkblue",
+          group = "Stations"
+        )
+    }
+  )
+  
+  wx_table <- reactive({
+    
+    wx_filtered() |>
+      sf::st_drop_geometry() |>
+      dplyr::select(
+        rep_date, wmo, name,
+        ffmc, dmc, dc,
+        isi, bui, fwi
+      ) |>
+      dplyr::mutate(
+        row_id = dplyr::row_number(),
+        .before = 1
+      )
+    
+  })
+  
+  output$starting_codes <- renderDT({
+    datatable(
+      wx_table(),
+      selection = list(
+        mode = "single",
+        target = "row"
+      )
+    )
+    print(datatable(
+      wx_table(),
+      selection = list(
+        mode = "single",
+        target = "row"
+      )
+    ))
+  })
+  
+  observeEvent(input$starting_codes_rows_selected, {
+    idx <- input$starting_codes_rows_selected
+    req(length(idx) == 1)
+    row <- wx_table()[idx, ]
+    updateRadioButtons(
+      session,
+      "index_source",
+      selected = "Nearby Weather Station"
+    )
+    updateNumericInput(
+      session,
+      "user_ffmc",
+      value = row$ffmc
+    )
+    updateNumericInput(
+      session,
+      "user_dmc",
+      value = row$dmc
+    )
+    updateNumericInput(
+      session,
+      "user_dc",
+      value = row$dc
+    )
+    
+  })
+  
+  
+
+  # =========================================================
+  # ---------------- SAVE Web Services ----------------------
   # =========================================================
   observeEvent(input$save_wcs, {
     
@@ -500,7 +656,6 @@ server <- function(input, output, session){
       )
     }
     
-    
     # HOTSPOTS
     
     if (isTRUE(input$save_hs)) {
@@ -532,9 +687,27 @@ server <- function(input, output, session){
       )
     }
     
-    showNotification("WCS layers saved", type = "message")
+    ## Wx Station Output
+    
+    if (isTRUE(input$save_wx)) {
+      
+      # CSV export
+      wx_csv <- sf::st_coordinates(wx) |>
+        cbind(sf::st_drop_geometry(wx))
+      
+      write.csv(
+        wx_csv,
+        file = file.path(
+          out_dir,
+          paste0(format(Sys.Date(), "%Y%m%d"), "_wx_stns.csv")
+        ),
+        row.names = FALSE
+      )
+    }
+    showNotification("Web Service layers saved", type = "message")
   })
   
+
   # =========================================================
   # -------------------- GET FIRE POINT ---------------------
   # =========================================================
@@ -745,7 +918,7 @@ server <- function(input, output, session){
         footer = NULL,
         easyClose = FALSE
       ))
-      DEM<-grid_grab(reference_grid = fuels, output_directory =paste0(base_dir, "/"))
+      DEM<-grid_grab(reference_grid = fuels, output_directory =paste0(base_dir, "/"),ref_is_fuel = T)
       removeModal()
       showNotification("Fuels + DEM clipped successfully", type = "message")
       
@@ -1175,6 +1348,47 @@ server <- function(input, output, session){
     
     showNotification("SpotWX saved successfully", type = "message")
   })
+  
+  
+  observeEvent(input$calc_fwi,{
+    
+    print(":hi")
+    cffdrs_input <- reactive({
+      
+      req(spotwx_results())
+      
+      weather <- spotwx_results()
+      
+      lapply(weather,function(model_wx){
+        fwi_wx <- model_wx$prometheus
+        noon_wx <- fwi_wx[which(fwi_wx$HOUR == 12),]
+        names(noon_wx) <- c("DATE","HOUR","TEMP","RH","WD","WS","PREC")
+        noon_wx$DATE <- as.Date(noon_wx$DATE,"%d/%m/%Y")
+        
+        noon_wx <- cffdrs::fwi(noon_wx,
+                    init = c(input$user_ffmc,
+                             input$user_dmc,
+                             input$user_dc))
+        
+        fwi_wx[which(fwi_wx$HOUR == 12),c("FFMC","DMC","DC","ISI","BUI","FWI")] <-
+          noon_wx[,c("FFMC","DMC","DC","ISI","BUI","FWI")]
+        
+      })
+      
+      weather$id <- weather$MODEL
+
+      cffdrs::fwi(
+        input = weather,
+        init = c(input$user_ffmc,
+                 input$user_dmc,
+                 input$user_dc),
+        batch = TRUE,
+        out = "A"
+      )
+        
+      })
+      
+    })
   
 }
 
