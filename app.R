@@ -130,12 +130,13 @@ ui <- fluidPage(
       radioButtons("index_source", "Source:",
                    choices = c("User Defined", "Nearby Weather Station")),
       
+      conditionalPanel(condition = "input.user_ffmc != NA",
       h4("Calculate FWI"),
       actionButton("calc_fwi","Calculate FWI"),
       checkboxGroupInput("fwi_var", "FWI Variables",
                          choices = c("FFMC","DMC","DC","ISI","BUI","FWI"),
                          selected = c("BUI","FWI"))
-      
+      )
     ),
     
     mainPanel(
@@ -552,13 +553,6 @@ server <- function(input, output, session){
         target = "row"
       )
     )
-    print(datatable(
-      wx_table(),
-      selection = list(
-        mode = "single",
-        target = "row"
-      )
-    ))
   })
   
   observeEvent(input$starting_codes_rows_selected, {
@@ -978,33 +972,53 @@ server <- function(input, output, session){
     )
   })
   
-  # ---- Extract SpotWX ----
-  extract_spotwx<-function(apikey,lat,lon,model){
+   # ---- Extract SpotWX ----
+  extract_spotwx<-function(apikey,lat,lon,model,fwi=F){
     
     #Get tz based on location ----
-    tz=lutz::tz_lookup_coords(lat=lat,lon=lon,method='accurate',warn = F)
-    tz<-lutz::tz_offset(clock::date_today(""),tz)$utc_offset_h
+    tz <- lutz::tz_lookup_coords(lat=lat,lon=lon,method='accurate',warn = F)
+    zone <- lutz::tz_offset(Sys.Date(),tz)$zone
+    tz <- lutz::tz_offset(Sys.Date(),tz)$utc_offset_h
+    
+    
+    model_run <- paste0(format(Sys.Date()-1,"%Y%m%d"),"_12Z")
     
     #Hit the SpotWx API for data----
     
-    url<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&",
-      "lat={lat}&lon={lon}&model={model}&tz={tz}&format=prometheus")
-    url2<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
-      "&model={model}&tz={tz}&output=metadata")
-    url3<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
-      "&model={model}&tz={tz}")
-    
-    
+    if(fwi){
+      url<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&",
+        "lat={lat}&lon={lon}&model={model}&modelrun={model_run}&tz={tz}&format=prometheus")
+      url2<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&modelrun={model_run}&tz={tz}&output=metadata")
+      url3<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&modelrun={model_run}&tz={tz}")
+      
+      sptget<-httr::RETRY("GET",url=url,times=10,pause_cap=4,pause_min=1.1)
+      metget<-httr::RETRY("GET",url=url2,times=10,pause_cap=4,pause_min=1.1)
+      runget<-httr::RETRY("GET",url=url3,times=10,pause_cap=4,pause_min=1.1)
+    }else{
+      url<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&",
+        "lat={lat}&lon={lon}&model={model}&tz={tz}&format=prometheus")
+      url2<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&tz={tz}&output=metadata")
+      url3<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&tz={tz}")
+      
     sptget<-httr::RETRY("GET",url=url,times=10,pause_cap=4,pause_min=1.1)
     metget<-httr::RETRY("GET",url=url2,times=10,pause_cap=4,pause_min=1.1)
     runget<-httr::RETRY("GET",url=url3,times=10,pause_cap=4,pause_min=1.1)
+    }
     if(sptget$status_code==200){
       meta=httr::content(metget,show_col_types = F)
       meta$model_run <- httr::content(runget, show_col_types = FALSE)$ISSUEDATE[1]
       meta$Acquisition_GMT<-metget$dat
+      meta$zone <- zone
       return(list(meta,prometheus=httr::content(sptget,show_col_types = F),full_model=httr::content(runget,show_col_types = F)
       ))
     } else{
@@ -1352,17 +1366,47 @@ server <- function(input, output, session){
   
   observeEvent(input$calc_fwi,{
     
-    print(":hi")
     cffdrs_input <- reactive({
       
       req(spotwx_results())
+      showNotification("Collecting Yesterdays Model Run for Backfill", type = "message")
+      wx_yest <-lapply(input$models, function(m){
+        extract_spotwx(input$api, coord[2], coord[1], m,fwi=T)
+      })
+      showNotification("Collectiion Complete", type = "message")
       
       weather <- spotwx_results()
-      
-      lapply(weather,function(model_wx){
+      showNotification("Preparing FWI Data", type = "message")
+      fwi_list <- lapply(weather,function(model_wx){
+        print(model_wx)
+        if(any(model_wx$prometheus$TEMP =="null")){return(NULL)}
+        yesterday <- wx_yest[[which(input$models == model_wx[[1]]$model)]]$prometheus
+        if(nrow(yesterday) == 0){return(NULL)}
         fwi_wx <- model_wx$prometheus
-        noon_wx <- fwi_wx[which(fwi_wx$HOUR == 12),]
+        
+        ## This gets silly fast, because Spot WX is coming in as the locally used
+        # timezone we need to assess if we have the value that would have been
+        # associated with yesterdays starting codes for use when calculating
+        # hourly values. Otherwise we cut off a substantial amount of our 
+        # weather data.
+        if(grepl("S",model_wx[[1]]$zone)){
+            noon_wx <- fwi_wx[which(fwi_wx$HOUR == 12),]
+        }else{ 
+            noon_wx <- fwi_wx[which(fwi_wx$HOUR == 13),]
+        }
+        
         names(noon_wx) <- c("DATE","HOUR","TEMP","RH","WD","WS","PREC")
+        
+       if(fwi_wx$HOUR[1] != "17"){
+          out_wx <- rbind(yesterday[if(grepl("S",model_wx[[1]]$zone)){
+            which(yesterday$HOUR == "17")[1]
+          }else{
+              which(yesterday$HOUR == "18")[1]
+          }:which(paste(yesterday$HOURLY, yesterday$HOUR) == paste(fwi_wx$HOURLY[1], fwi_wx$HOUR[1])),],fwi_wx[-1,])
+       } else {out_wx <- fwi_wx[-1,]}
+        names(out_wx) <- c("DATE","HOUR","TEMP","RH","WD","WS","PREC")
+        out_wx[,c("DMC","DC","BUI")] <- NA
+        
         noon_wx$DATE <- as.Date(noon_wx$DATE,"%d/%m/%Y")
         
         noon_wx <- cffdrs::fwi(noon_wx,
@@ -1370,22 +1414,26 @@ server <- function(input, output, session){
                              input$user_dmc,
                              input$user_dc))
         
-        fwi_wx[which(fwi_wx$HOUR == 12),c("FFMC","DMC","DC","ISI","BUI","FWI")] <-
-          noon_wx[,c("FFMC","DMC","DC","ISI","BUI","FWI")]
+        out_wx[1,c("DMC","DC")] <- data.frame(input$user_dmc,input$user_dc)
+        out_wx[1:which(out_wx$HOUR == "12")[1],c("DMC","DC","BUI")] <- data.frame("DMC"=input$user_dmc,"DC" = input$user_dc, "BUI"= cffdrs:::buildup_index(out_wx[1,"DMC"],out_wx[1,"DC"]))
+        
+        out_matchs <- data.frame(from=which(out_wx$HOUR == 13),to=c(which(out_wx$HOUR ==  12)[-1],nrow(out_wx)))
+        
+        for(i in seq(noon_wx$TEMP)){
+          out_wx[out_matchs[i,"from"]:out_matchs[i,"to"],c("DMC","DC","BUI")] <- noon_wx[i,c("DMC","DC","BUI")] 
+        }
+        
+        out_wx <- cffdrs::hffmc(out_wx,
+                      ffmc_old = input$user_ffmc,
+                      hourlyFWI = T)
+        names(out_wx) <- toupper(names(out_wx))
+    
+        showNotification("Hourly FWI Calculation Complete", type = "message")
+        return(out_wx)
         
       })
       
-      weather$id <- weather$MODEL
 
-      cffdrs::fwi(
-        input = weather,
-        init = c(input$user_ffmc,
-                 input$user_dmc,
-                 input$user_dc),
-        batch = TRUE,
-        out = "A"
-      )
-        
       })
       
     })
