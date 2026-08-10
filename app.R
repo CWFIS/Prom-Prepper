@@ -1532,7 +1532,7 @@ server <- function(input, output, session){
     out_dir <- file.path(
       base_dir,
       paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
-      "spotwx"
+      "fwi"
     )
     
     # ensure folder exists (safe even if already created)
