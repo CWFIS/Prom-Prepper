@@ -695,6 +695,8 @@ server <- function(input, output, session){
     
     if (isTRUE(input$save_wx)) {
       
+      wx <- wx_filtered()
+      
       # CSV export
       wx_csv <- sf::st_coordinates(wx) |>
         cbind(sf::st_drop_geometry(wx))
@@ -1318,7 +1320,8 @@ server <- function(input, output, session){
     
     out_dir <- file.path(
       base_dir,
-      paste0(format(Sys.Date(), "%Y%m%d"), "_spotwx")
+      paste0(format(Sys.Date(), "%Y%m%d"), "_Scenario"),
+      "spotwx"
     )
     
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1476,7 +1479,7 @@ server <- function(input, output, session){
           margin = list(r = 120)
         )
     })
-    showNotification("FWI saved successfully", type = "message")
+    showNotification("FWI plotted successfully", type = "message")
   })
 
   ## Save FWI Plots ===============
@@ -1602,13 +1605,11 @@ observeEvent(input$save_fwi, {
   ## ---- forecasts ----
   invisible(lapply(seq_along(input$models), function(i) {
     
-    model <- input$models[i]
-    
     write.csv(
-      cffdrs_list[[i]],
+      df[[i]],
       file = file.path(
         out_dir,
-        paste0(model, "_fwi_.csv")
+        paste0(model, "_fwi.csv")
       ),
       row.names = FALSE
     )
@@ -1635,7 +1636,7 @@ observeEvent(input$save_fwi, {
       weather <- spotwx_results()
       showNotification("Preparing FWI Data", type = "message")
       fwi_list <- lapply(weather,function(model_wx){
-        print(model_wx)
+        
         if(any(model_wx$prometheus$TEMP =="null")){return(NULL)}
         yesterday <- wx_yest[[which(input$models == model_wx[[1]]$model)]]$prometheus
         if(nrow(yesterday) == 0){return(NULL)}
