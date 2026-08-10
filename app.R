@@ -163,6 +163,7 @@ server <- function(input, output, session){
   perim_raw <- reactiveVal(NULL)
   point_event <- reactiveVal(NULL)
   wx_raw <- reactiveVal(NULL)
+  cffdrs_list <- reactiveVal(NULL)
   
   output$spot_plot <- renderPlotly({
     req(spot_plot_obj())
@@ -1363,11 +1364,8 @@ server <- function(input, output, session){
     showNotification("SpotWX saved successfully", type = "message")
   })
   
-  
   observeEvent(input$calc_fwi,{
     
-    cffdrs_input <- reactive({
-      
       req(spotwx_results())
       showNotification("Collecting Yesterdays Model Run for Backfill", type = "message")
       wx_yest <-lapply(input$models, function(m){
@@ -1432,12 +1430,10 @@ server <- function(input, output, session){
         return(out_wx)
         
       })
-      
-
+      names(fwi_list) <- input$models
+      cffdrs_list(fwi_list)
       })
       
-    })
-  
 }
 
 shinyApp(ui, server)
