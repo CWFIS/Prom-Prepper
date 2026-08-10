@@ -1580,17 +1580,6 @@ observeEvent(input$save_fwi, {
     return()
   }
   
-  coords_now <- sf::st_coordinates(get_point())
-  
-  if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
-    showNotification(
-      "Location has changed. Please re-run 'Retrieve Models'.",
-      type = "error",
-      duration = 6
-    )
-    return()
-  }
-  
   ### ---- single source of truth ----
   base_dir <- output_dir()
   
