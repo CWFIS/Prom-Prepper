@@ -1594,6 +1594,10 @@ observeEvent(input$save_fwi, {
   ## ---- forecasts ----
   invisible(lapply(seq_along(input$models), function(i) {
     
+    if(is.null(df[[i]])){return(NULL)}
+    model <- input$models[i]
+    
+    
     write.csv(
       df[[i]],
       file = file.path(
@@ -1656,6 +1660,11 @@ observeEvent(input$save_fwi, {
         out_wx[,c("DMC","DC","BUI")] <- NA
         
         noon_wx$DATE <- as.Date(noon_wx$DATE,"%d/%m/%Y")
+        noon_wx$yr <- format(noon_wx$DATE,"%Y")
+        noon_wx$mon <- format(noon_wx$DATE,"%m")
+        noon_wx$day <- format(noon_wx$DATE,"%d")
+        noon_wx$lat <- coord[2]
+        noon_wx$long <- coord[1]
         
         noon_wx <- cffdrs::fwi(noon_wx,
                     init = c(input$user_ffmc,
