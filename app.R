@@ -5,6 +5,8 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       
+      ## Fire Location ===========================
+      
       h4("Fire Location"),
       radioButtons("loc_type", "Input method:",
                    choices = c("Map Click", "Lat/Long", "Upload Perim (kml)", "Upload Perim (.zip)")),
@@ -30,6 +32,8 @@ ui <- fluidPage(
       textInput("fire_name", "Fire name:", value = ""),
       hr(),
       
+      
+      ## Fuel and DEM ===========================
       h4("Fuels & DEM"),
       radioButtons("fuel_source", "Source:",
                    choices = c("CWFIS National Grid (2024)", "Local File")),
@@ -88,8 +92,21 @@ ui <- fluidPage(
           step = 1
         )
       ),
+      checkboxInput("save_wx", "Weather Stations", TRUE),
+      conditionalPanel(
+        condition = "input.save_wx == true",
+        sliderInput(
+          "wx_date",
+          "Weather Date",
+          min = Sys.Date()-7,
+          max = Sys.Date()-1,
+          value = Sys.Date()-1,
+          step = 1
+        )
+      ),
       actionButton("save_wcs", "Save selected"),
       hr(),
+      ## Spot WX ===========================
       
       h4("SpotWx"),
       textInput("api", "API Key", value=Sys.getenv("SPOTWX_API_KEY")),
@@ -108,11 +125,36 @@ ui <- fluidPage(
       
       hr(),
       
+      ## FWI Values ===========================
+      
+      h4("User Starting Codes"),
+      numericInput("user_ffmc",label = "FFMC:", value = ""),
+      numericInput("user_dmc",label = "DMC:", value = ""),
+      numericInput("user_dc",label = "DC:", value = ""),
+      hr(),
+      
+      h4("Starting Code Use"),
+      radioButtons("index_source", "Source:",
+                   choices = c("User Defined", "Nearby Weather Station")),
+      
+      h4("Calculate FWI"),
+      actionButton("calc_fwi","Calculate FWI"),
+      checkboxGroupInput("fwi_var", "FWI Variables",
+                         choices = c("FFMC","DMC","DC","ISI","BUI","FWI"),
+                         selected = c("BUI","FWI")),
+      actionButton("plot_fwi", "Plot FWI"),
+      actionButton("save_fwi_plot", "Save FWI plot"),
+      actionButton("save_fwi", "Save FWI Calculation")
     ),
     
     mainPanel(
       leafletOutput("map", height = 400),
-      plotlyOutput("spot_plot", height = 600)
+      h2("Starting Codes from Nearby Stations"),
+      DTOutput(outputId = "starting_codes"),
+      h2("Spot Wx Plots"),
+      plotlyOutput("spot_plot", height = 600),
+      h2("FWI Plots"),
+      plotlyOutput("fwi_plot", height = 600)
     )
   )
 )
@@ -126,14 +168,22 @@ server <- function(input, output, session){
   spotwx_results <- reactiveVal(NULL) 
   spotwx_df <- reactiveVal(NULL)
   spot_plot_obj <- reactiveVal(NULL)
+  fwi_plot_obj <- reactiveVal(NULL)
   nbac_raw <- reactiveVal(NULL)
   hotspots_raw <- reactiveVal(NULL)
   perim_raw <- reactiveVal(NULL)
   point_event <- reactiveVal(NULL)
+  wx_raw <- reactiveVal(NULL)
+  cffdrs_list <- reactiveVal(NULL)
+  cffdrs_df <- reactiveVal(NULL)
   
   output$spot_plot <- renderPlotly({
     req(spot_plot_obj())
     spot_plot_obj()
+  })
+  output$fwi_plot <- renderPlotly({
+    req(fwi_plot_obj())
+    fwi_plot_obj()
   })
   output_dir <- reactive({
     req(input$outdir, nzchar(input$fire_name))
@@ -174,9 +224,8 @@ server <- function(input, output, session){
     paste("Selected:", outdir())
   })
   
-  # =========================================================
-  # -------------------- MAP PIPELINE ------------------------
-  # =========================================================
+  # MAP PIPELINE===============================================
+ 
   # ---- POINT STATE ----
   observeEvent(get_point(), {
     
@@ -246,9 +295,8 @@ server <- function(input, output, session){
       )
   })
   
-  # =========================================================
-  # ------------------------ NBAC ----------------------------
-  # =========================================================
+  # NBAC ===================================================
+
   ###Downloading###
   observeEvent(point_event(), {
     
@@ -327,10 +375,9 @@ server <- function(input, output, session){
       )
   })
   
-  # =========================================================
-  # ---------------------- HOTSPOTS --------------------------
-  # =========================================================
-  # ---- DOWNLOAD ONLY (cache) ----
+  # HOTSPOTS =================================================
+
+      ## DOWNLOAD ONLY (cache) ---------
   observeEvent(point_event(), {
     
     req(point_event())
@@ -352,7 +399,7 @@ server <- function(input, output, session){
     hotspots_raw(hs)
   })
   
-  # ---- FILTER + RENDER  ----
+    ## ---- FILTER + RENDER  ----
   hotspots_filtered <- reactive({
     
     req(hotspots_raw(), point_event(), input$hs_radius)
@@ -391,11 +438,10 @@ server <- function(input, output, session){
     }
   )
   
-  # =========================================================
-  # ------------------ M3 Perimeters ------------------------
-  # =========================================================
+  ## M3 Perimeters ==========================================
+
   
-  # ---- DOWNLOAD ONLY (cache) ----
+  ### ---- DOWNLOAD ONLY (cache) ----
   observeEvent(point_event(), {
     
     req(point_event())
@@ -417,7 +463,7 @@ server <- function(input, output, session){
     perim_raw(perim)
   })
   
-  # ---- FILTER +RENDER ONLY ----
+  ## ---- FILTER + RENDER ONLY ----
   perim_filtered <- reactive({
     
     req(perim_raw(), point_event(), input$perim_radius)
@@ -434,9 +480,123 @@ server <- function(input, output, session){
     perim[d <= input$perim_radius * 1000, ]
   })
   
-  # =========================================================
-  # -------------------- SAVE WCS ---------------------------
-  # =========================================================
+  # GET WEATHER =================================================
+      ## ---- DOWNLOAD ONLY (cache) ----
+  
+  observeEvent(point_event(), {
+    
+    req(point_event())
+    
+    bb <- make_bbox(50)$bbox_str
+    
+    wx <- sf::st_read(dsn = 
+                        paste0(
+                          "http://cwfis.cfs.nrcan.gc.ca/geoserver/public/wfs?",
+                          "service=WFS",
+                          "&version=2.0.1",
+                          "&request=GetFeature",
+                          "&typeName=public:firewx_stns",
+                          "&outputFormat=application/json",
+                          "&BBOX=",bb
+                        ),
+                      quiet = TRUE
+    )
+    
+    wx_raw(wx)
+  })
+  
+  ## ---- FILTER + RENDER  ----
+  wx_filtered <- reactive({
+    
+    req(wx_raw(), point_event(), input$wx_date)
+  
+    wx <- wx_raw() |>
+      sf::st_transform(3978)
+    
+    wx <- wx[which(format(wx$rep_date,"%Y-%m-%d") == input$wx_date),]
+    
+  })
+  
+  observeEvent(
+    list(wx_filtered(), input$save_wx),
+    {
+      
+      if (!isTRUE(input$save_wx)) {
+        leafletProxy("map") %>%
+          clearGroup("Stations")
+        return()
+      }
+      
+      leafletProxy("map") %>%
+        clearGroup("Stations") %>%
+        addCircleMarkers(
+          data = sf::st_transform(wx_filtered(), 4326),
+          radius = 4,
+          stroke = FALSE,
+          fillOpacity = 0.8,
+          color = "darkblue",
+          group = "Stations"
+        )
+    }
+  )
+  
+  wx_table <- reactive({
+    
+    wx_filtered() |>
+      sf::st_drop_geometry() |>
+      dplyr::select(
+        rep_date, wmo, name,
+        ffmc, dmc, dc,
+        isi, bui, fwi
+      ) |>
+      dplyr::mutate(
+        row_id = dplyr::row_number(),
+        .before = 1
+      )
+    
+  })
+  
+  output$starting_codes <- renderDT({
+    datatable(
+      wx_table(),
+      selection = list(
+        mode = "single",
+        target = "row"
+      )
+    )
+  })
+  
+  observeEvent(input$starting_codes_rows_selected, {
+    idx <- input$starting_codes_rows_selected
+    req(length(idx) == 1)
+    row <- wx_table()[idx, ]
+    updateRadioButtons(
+      session,
+      "index_source",
+      selected = "Nearby Weather Station"
+    )
+    updateNumericInput(
+      session,
+      "user_ffmc",
+      value = row$ffmc
+    )
+    updateNumericInput(
+      session,
+      "user_dmc",
+      value = row$dmc
+    )
+    updateNumericInput(
+      session,
+      "user_dc",
+      value = row$dc
+    )
+    
+  })
+  
+  
+
+  # SAVE Web Services=======================================
+  
   observeEvent(input$save_wcs, {
     
     if (!nzchar(input$fire_name)) {
@@ -500,7 +660,6 @@ server <- function(input, output, session){
       )
     }
     
-    
     # HOTSPOTS
     
     if (isTRUE(input$save_hs)) {
@@ -532,21 +691,39 @@ server <- function(input, output, session){
       )
     }
     
-    showNotification("WCS layers saved", type = "message")
+    ## Wx Station Output
+    
+    if (isTRUE(input$save_wx)) {
+      
+      wx <- wx_filtered()
+      
+      # CSV export
+      wx_csv <- sf::st_coordinates(wx) |>
+        cbind(sf::st_drop_geometry(wx))
+      
+      write.csv(
+        wx_csv,
+        file = file.path(
+          out_dir,
+          paste0(format(Sys.Date(), "%Y%m%d"), "_wx_stns.csv")
+        ),
+        row.names = FALSE
+      )
+    }
+    showNotification("Web Service layers saved", type = "message")
   })
   
-  # =========================================================
-  # -------------------- GET FIRE POINT ---------------------
-  # =========================================================
+
+  # GET FIRE POINT=========================================================
   get_point <- reactive({
     
     req(input$loc_type)
     
     loc <- input$loc_type
     
-    # =========================================================
-    # 1. MAP CLICK
-    # =========================================================
+     
+    ## 1. MAP CLICK=========================================================
+    
     if (loc == "Map Click") {
       
       if (is.null(input$map_click)) {
@@ -565,9 +742,8 @@ server <- function(input, output, session){
       )
     }
     
-    # =========================================================
-    # 2. LAT / LONG INPUT
-    # =========================================================
+    # 2. LAT / LONG INPUT ==================================
+
     if (loc == "Lat/Long") {
       
       req(input$lon, input$lat)
@@ -584,9 +760,7 @@ server <- function(input, output, session){
       )
     }
     
-    # =========================================================
-    # 3. FILE UPLOAD (KML or SHAPEFILE ZIP)
-    # =========================================================
+    # 3. FILE UPLOAD (KML or SHAPEFILE ZIP)====================================
     
     if (loc %in% c("Upload Perim (kml)", "Upload Perim (.zip)")) {
       
@@ -595,16 +769,15 @@ server <- function(input, output, session){
       file_path <- input$perim_upload$datapath
       file_name <- input$perim_upload$name
       
-      # ---------------------------------------------------------
-      # KML PATH
-      # ---------------------------------------------------------
+      ### KML PATH------------------------------------------------
+
       if (loc == "Upload Perim (kml)") {
         
         fire <- sf::st_read(file_path, quiet = TRUE)
         
       } else {
         
-        # ZIP SHAPEFILE PATH
+        ## ZIP SHAPEFILE PATH ==========================
         validate(
           need(grepl("\\.zip$", file_name),
                "Please upload a .zip file containing shapefile components")
@@ -627,9 +800,8 @@ server <- function(input, output, session){
         fire <- sf::st_read(shp_file[1], quiet = TRUE)
       }
       
-      # ---------------------------------------------------------
-      # COMMON GEOMETRY CLEANUP
-      # ---------------------------------------------------------
+      # COMMON GEOMETRY CLEANUP-------------------------------------------
+   
       fire <- fire[
         sf::st_geometry_type(fire) %in% c("POLYGON", "MULTIPOLYGON"),
       ]
@@ -657,12 +829,11 @@ server <- function(input, output, session){
   })
   
   
-  # =========================================================
-  # ------------------ Fuels + DEM --------------------------
-  # =========================================================
+  # Fuels + DEM ==============================================
+
    observeEvent(input$clip, {
     
-    # ---- user-facing validation ----
+    ## ---- user-facing validation ----
     point <- get_point()
     
     if (!nzchar(input$fire_name)) {
@@ -745,17 +916,17 @@ server <- function(input, output, session){
         footer = NULL,
         easyClose = FALSE
       ))
-      DEM<-grid_grab(reference_grid = fuels, output_directory =paste0(base_dir, "/"))
+      DEM<-grid_grab(reference_grid = fuels, output_directory =paste0(base_dir, "/"),ref_is_fuel = T)
       removeModal()
       showNotification("Fuels + DEM clipped successfully", type = "message")
       
     }
   })
   
-  # =========================================================
+  
   # -------------------- Spot Wx ----------------------------
-  # =========================================================
-  # ---- Get Spot models ----
+  
+  ## ---- Get Spot models ----
   models_available <- reactive({
     req(input$api)
     
@@ -805,33 +976,53 @@ server <- function(input, output, session){
     )
   })
   
-  # ---- Extract SpotWX ----
-  extract_spotwx<-function(apikey,lat,lon,model){
+   ## ---- Extract SpotWX ----
+  extract_spotwx<-function(apikey,lat,lon,model,fwi=F){
     
-    #Get tz based on location ----
-    tz=lutz::tz_lookup_coords(lat=lat,lon=lon,method='accurate',warn = F)
-    tz<-lutz::tz_offset(clock::date_today(""),tz)$utc_offset_h
+    ##Get tz based on location ----
+    tz <- lutz::tz_lookup_coords(lat=lat,lon=lon,method='accurate',warn = F)
+    zone <- lutz::tz_offset(Sys.Date(),tz)$zone
+    tz <- lutz::tz_offset(Sys.Date(),tz)$utc_offset_h
+    
+    
+    model_run <- paste0(format(Sys.Date()-1,"%Y%m%d"),"_12Z")
     
     #Hit the SpotWx API for data----
     
-    url<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&",
-      "lat={lat}&lon={lon}&model={model}&tz={tz}&format=prometheus")
-    url2<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
-      "&model={model}&tz={tz}&output=metadata")
-    url3<-glue::glue(
-      "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
-      "&model={model}&tz={tz}")
-    
-    
+    if(fwi){
+      url<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&",
+        "lat={lat}&lon={lon}&model={model}&modelrun={model_run}&tz={tz}&format=prometheus")
+      url2<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&modelrun={model_run}&tz={tz}&output=metadata")
+      url3<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&modelrun={model_run}&tz={tz}")
+      
+      sptget<-httr::RETRY("GET",url=url,times=10,pause_cap=4,pause_min=1.1)
+      metget<-httr::RETRY("GET",url=url2,times=10,pause_cap=4,pause_min=1.1)
+      runget<-httr::RETRY("GET",url=url3,times=10,pause_cap=4,pause_min=1.1)
+    }else{
+      url<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&",
+        "lat={lat}&lon={lon}&model={model}&tz={tz}&format=prometheus")
+      url2<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&tz={tz}&output=metadata")
+      url3<-glue::glue(
+        "https://spotwx.io/api.php?key={apikey}&lat={lat}&lon={lon}",
+        "&model={model}&tz={tz}")
+      
     sptget<-httr::RETRY("GET",url=url,times=10,pause_cap=4,pause_min=1.1)
     metget<-httr::RETRY("GET",url=url2,times=10,pause_cap=4,pause_min=1.1)
     runget<-httr::RETRY("GET",url=url3,times=10,pause_cap=4,pause_min=1.1)
+    }
     if(sptget$status_code==200){
       meta=httr::content(metget,show_col_types = F)
       meta$model_run <- httr::content(runget, show_col_types = FALSE)$ISSUEDATE[1]
       meta$Acquisition_GMT<-metget$dat
+      meta$zone <- zone
       return(list(meta,prometheus=httr::content(sptget,show_col_types = F),full_model=httr::content(runget,show_col_types = F)
       ))
     } else{
@@ -874,14 +1065,14 @@ server <- function(input, output, session){
       
       spotwx_results(results)
       
-      # ---- build df ----
+      ## ---- build df ----
       df <- bind_rows(lapply(results, function(x) {
         
         meta <- x[[1]]
         full <- x$full_model
         full[] <- lapply(full, as.character)
         
-        # metadata back in
+        ## metadata back in ---------------
         hgt <- meta$hgt_surface
         full$hgt_surface <- as.character(meta$hgt_surface)
         full$model_elev <- paste0(full$MODEL," ", full$hgt_surface,"(m) ", 
@@ -922,14 +1113,14 @@ server <- function(input, output, session){
       )
       return()
     }
-    # ---- build ggplots (NOT plotly yet) ----
+    ## ---- build ggplots (NOT plotly yet) ----
     plots <- lapply(seq_along(input$var), function(i) {
       
       var <- input$var[i]
       
       ggplot(df, aes(
         x = DATETIME,
-        y = as.numeric(df[[var]]),
+        y = as.numeric(.data[[var]]),
         color = model_elev
       )) +
         geom_line() +
@@ -951,7 +1142,7 @@ server <- function(input, output, session){
       
       p <- ggplot(df, aes(
         x = DATETIME,
-        y = as.numeric(df[[var]]),
+        y = as.numeric(.data[[var]]),
         color = model_elev
       )) +
         geom_line() +
@@ -973,22 +1164,22 @@ server <- function(input, output, session){
     legend <- cowplot::get_legend(
       ggplot(df, aes(
         x = DATETIME,
-        y = as.numeric(df[[input$var[1]]]),
+        y = as.numeric(.data[[input$var[1]]]),
         color = model_elev
       )) +
         geom_line() +
         theme_minimal() +
         theme(legend.position = "right")
     )
-    # ---- arrange ggplots ----
+    ## ---- arrange ggplots ----
     p_gg <- gridExtra::grid.arrange(
       grobs = c(plots, list(legend)),
       ncol = 3
     )
-    # ---- STORE STATIC ggplot object ----
+    ## ---- STORE STATIC ggplot object ----
     spot_plot_obj(p_gg)
     
-    # ---- RENDER INTERACTIVE VERSION (separately) ----
+    ## ---- RENDER INTERACTIVE VERSION (separately) ----
     output$spot_plot <- renderPlotly({
       subplot(
         plots_plotly,
@@ -1008,6 +1199,9 @@ server <- function(input, output, session){
         )
     })
   })
+  
+  ## Save Spotwx Plots ===============
+  
   observeEvent(input$save_plot, {
     results <- spotwx_results()
     if (is.null(results)) {
@@ -1050,10 +1244,10 @@ server <- function(input, output, session){
     }
     
     
-    # ---- single source of truth (state layer) ----
+    ### ---- single source of truth (state layer) ----
     base_dir <- output_dir()
     
-    # add run-specific folder
+    ## add run-specific folder
     out_dir <- file.path(
       base_dir,
       paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
@@ -1066,13 +1260,13 @@ server <- function(input, output, session){
                          paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
                          "Output"), recursive = TRUE, showWarnings = FALSE)
     
-    # ---- file path ----
+    ## ---- file path ----
     file_path <- file.path(
       out_dir,
       paste0("spotwx_compare_", format(Sys.Date(), "%Y%m%d"), ".tiff")
     )
     
-    # ---- save plot ----
+    ## ---- save plot ----
     ggsave(
       filename = file_path,
       plot = spot_plot_obj(),
@@ -1084,6 +1278,7 @@ server <- function(input, output, session){
     
     showNotification("Plot saved as TIFF", type = "message")
   })
+  ## Save Spotwx #########
   observeEvent(input$save_spotwx, {
     
     results <- spotwx_results()
@@ -1120,18 +1315,18 @@ server <- function(input, output, session){
       return()
     }
     
-    # ---- single source of truth ----
+    ### ---- single source of truth ----
     base_dir <- output_dir()
     
     out_dir <- file.path(
       base_dir,
-      paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+      paste0(format(Sys.Date(), "%Y%m%d"), "_Scenario"),
       "spotwx"
     )
     
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     
-    # ---- metadata ----
+    ## ---- metadata ----
     meta <- lapply(results, function(x) {
       meta_data <- x[[1]]
       meta_data$land_surface <- NULL
@@ -1145,7 +1340,7 @@ server <- function(input, output, session){
     
     meta_table <- bind_rows(meta)
     
-    # ---- forecasts ----
+    ## ---- forecasts ----
     invisible(lapply(seq_along(input$models), function(i) {
       
       model <- input$models[i]
@@ -1163,7 +1358,7 @@ server <- function(input, output, session){
       )
     }))
     
-    # ---- metadata write ----
+    ## ---- metadata write ----
     write.csv(
       meta_table,
       file = file.path(
@@ -1175,7 +1370,357 @@ server <- function(input, output, session){
     
     showNotification("SpotWX saved successfully", type = "message")
   })
+  # Plot FWI ===============
+  observeEvent(input$plot_fwi, {
+    
+    df <- cffdrs_df()
+    
+    if (is.null(df)) {
+      showNotification("No FWI Calculation results found. Please retrieve models first.", type = "error")
+      return()
+    }
+    
+    req(input$fwi_var)
+    req(get_point())
+    
+    coords_now <- sf::st_coordinates(get_point())
+    
+    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
+      showNotification(
+        "Location has changed. Please re-run 'Retrieve Models'.",
+        type = "error",
+        duration = 6
+      )
+      return()
+    }
+ 
+    ## ---- build ggplots (NOT plotly yet) ----
+    plots <- lapply(seq_along(input$fwi_var), function(i) {
+      
+      var <- input$fwi_var[i]
+      
+      ggplot(df, aes(
+        x = DATETIME,
+        y = as.numeric(.data[[var]]),
+        color = source
+      )) +
+        geom_line() +
+        labs(x = "", y = var) +
+        theme_minimal() +
+        theme(legend.position = "none") +
+        scale_x_datetime(
+          limits = c(
+            min(df$DATETIME),
+            min(df$DATETIME) + lubridate::days(input$ndays)
+          ),
+          date_breaks = "1 day",
+          date_labels = "%b %d"
+        )
+    })
+    fwi_plots <- lapply(seq_along(input$fwi_var), function(i) {
+      
+      var <- input$fwi_var[i]
+      
+      p <- ggplot(df, aes(
+        x = DATETIME,
+        y = as.numeric(.data[[var]]),
+        color = source
+      )) +
+        geom_line() +
+        labs(x = "", y = var) +
+        theme_minimal() +   
+        scale_x_datetime(
+          limits = c(
+            min(df$DATETIME),
+            min(df$DATETIME) + lubridate::days(input$ndays)
+          ),
+          date_breaks = "1 day",
+          date_labels = "%b %d"
+        )
+      
+      ggplotly(p) %>%
+        style(showlegend = (i == 1))   
+    })
+    
+    legend <- cowplot::get_legend(
+      ggplot(df, aes(
+        x = DATETIME,
+        y = as.numeric(.data[[input$fwi_var[1]]]),
+        color = source
+      )) +
+        geom_line() +
+        theme_minimal() +
+        theme(legend.position = "right")
+    )
+    ## ---- arrange ggplots ----
+    p_gg <- gridExtra::grid.arrange(
+      grobs = c(plots, list(legend)),
+      ncol = 3
+    )
+    ## ---- STORE STATIC ggplot object ----
+    fwi_plot_obj(p_gg)
+    
+    ## ---- RENDER INTERACTIVE VERSION (separately) ----
+    output$fwi_plot <- renderPlotly({
+      subplot(
+        fwi_plots,
+        nrows = 3,
+        shareX = TRUE,
+        titleY = TRUE
+      ) %>%
+        layout(
+          legend = list(
+            orientation = "v",
+            x = 1.02,
+            y = 1,
+            xanchor = "left",
+            yanchor = "top"
+          ),
+          margin = list(r = 120)
+        )
+    })
+    showNotification("FWI plotted successfully", type = "message")
+  })
+
+  ## Save FWI Plots ===============
   
+  observeEvent(input$save_fwi_plot, {
+    results <- cffdrs_list()
+    if (is.null(results)) {
+      showNotification("No SpotWX results found. Please retrieve models first.", type = "error")
+      return()
+    }
+    df <- cffdrs_df()
+    req(df)
+    req(get_point())
+    
+    if (is.null(fwi_plot_obj())) {
+      showNotification("Please generate a plot before saving.", type="error")
+      return()
+    }
+    
+    if (!nzchar(input$fire_name)) {
+      showNotification("Please enter a fire name.", type="error")
+      return()
+    }
+    
+    outdir_parsed <- tryCatch(
+      parseDirPath(volumes, input$outdir),
+      error = function(e) NULL
+    )
+    
+    if (is.null(outdir_parsed) || length(outdir_parsed) == 0) {
+      showNotification("Please select an output folder.", type = "error")
+      return()
+    }
+    
+    coords_now <- sf::st_coordinates(get_point())
+    
+    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
+      showNotification(
+        "Location has changed. Please re-run 'Retrieve Models'.",
+        type = "error",
+        duration = 6
+      )
+      return()
+    }
+    
+    ### ---- single source of truth (state layer) ----
+    base_dir <- output_dir()
+    
+    ## add run-specific folder
+    out_dir <- file.path(
+      base_dir,
+      paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+      "fwi"
+    )
+    
+    # ensure folder exists (safe even if already created)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(base_dir,
+                         paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+                         "Output"), recursive = TRUE, showWarnings = FALSE)
+    
+    ## ---- file path ----
+    file_path <- file.path(
+      out_dir,
+      paste0("fwi_compare_", format(Sys.Date(), "%Y%m%d"), ".tiff")
+    )
+    
+    ## ---- save plot ----
+    ggsave(
+      filename = file_path,
+      plot = fwi_plot_obj(),
+      device = "tiff",
+      width = 8,
+      height = 8,
+      dpi = 300
+    )
+    
+    showNotification("Plot saved as TIFF", type = "message")
+  })
+  ## Save FWI Wx #########
+observeEvent(input$save_fwi, {
+  
+  df <- cffdrs_list()
+  req(get_point())
+  
+  if (!nzchar(input$fire_name)) {
+    showNotification("Please enter a fire name.", type="error")
+    return()
+  }
+  
+  outdir_parsed <- tryCatch(
+    parseDirPath(volumes, input$outdir),
+    error = function(e) NULL
+  )
+  
+  if (is.null(outdir_parsed) || length(outdir_parsed) == 0) {
+    showNotification("Please select an output folder.", type = "error")
+    return()
+  }
+  
+  ### ---- single source of truth ----
+  base_dir <- output_dir()
+  
+  out_dir <- file.path(
+    base_dir,
+    paste0(format(Sys.Date(), "%Y%m%d"),"_Scenario"),
+    "fwi"
+  )
+  
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  ## ---- forecasts ----
+  invisible(lapply(seq_along(input$models), function(i) {
+    
+    if(is.null(df[[i]])){return(NULL)}
+    model <- input$models[i]
+    
+    
+    write.csv(
+      df[[i]],
+      file = file.path(
+        out_dir,
+        paste0(model, "_fwi.csv")
+      ),
+      row.names = FALSE
+    )
+  }))
+  
+    showNotification("FWI saved successfully", type = "message")
+  })
+  
+  # Calculate FWI ================
+  
+  observeEvent(input$calc_fwi,{
+    
+      req(spotwx_results())
+      showNotification("Collecting Yesterdays Model Run for Backfill", type = "message")
+      pt <- get_point()
+      req(pt)
+      
+      coord <- sf::st_coordinates(pt)
+      wx_yest <-lapply(input$models, function(m){
+        extract_spotwx(input$api, coord[2], coord[1], m,fwi=T)
+      })
+      showNotification("Collectiion Complete", type = "message")
+      
+      weather <- spotwx_results()
+      showNotification("Preparing FWI Data", type = "message")
+      fwi_list <- lapply(weather,function(model_wx){
+        
+        if(any(model_wx$prometheus$TEMP =="null")){return(NULL)}
+        yesterday <- wx_yest[[which(input$models == model_wx[[1]]$model)]]$prometheus
+        if(nrow(yesterday) == 0){return(NULL)}
+        fwi_wx <- model_wx$prometheus
+        
+        ## This gets silly fast, because Spot WX is coming in as the locally used
+        # timezone we need to assess if we have the value that would have been
+        # associated with yesterdays starting codes for use when calculating
+        # hourly values. Otherwise we cut off a substantial amount of our 
+        # weather data.
+        
+        if(grepl("S",model_wx[[1]]$zone)){
+            noon_wx <- fwi_wx[which(fwi_wx$HOUR == 12),]
+        }else{ 
+            noon_wx <- fwi_wx[which(fwi_wx$HOUR == 13),]
+        }
+        
+        names(noon_wx) <- c("DATE","HOUR","TEMP","RH","WD","WS","PREC")
+        
+       if(fwi_wx$HOUR[1] != "17"){
+          out_wx <- rbind(yesterday[if(grepl("S",model_wx[[1]]$zone)){
+            which(yesterday$HOUR == "17")[1]
+          }else{
+              which(yesterday$HOUR == "18")[1]
+          }:which(paste(yesterday$HOURLY, yesterday$HOUR) == paste(fwi_wx$HOURLY[1], fwi_wx$HOUR[1])),],fwi_wx[-1,])
+       } else {out_wx <- fwi_wx[-1,]}
+        names(out_wx) <- c("DATE","HOUR","TEMP","RH","WD","WS","PREC")
+        out_wx[,c("DMC","DC","BUI")] <- NA
+        
+        noon_wx$DATE <- as.Date(noon_wx$DATE,"%d/%m/%Y")
+        noon_wx$yr <- format(noon_wx$DATE,"%Y")
+        noon_wx$mon <- format(noon_wx$DATE,"%m")
+        noon_wx$day <- format(noon_wx$DATE,"%d")
+        noon_wx$lat <- coord[2]
+        noon_wx$long <- coord[1]
+        
+        noon_wx <- cffdrs::fwi(noon_wx,
+                    init = c(input$user_ffmc,
+                             input$user_dmc,
+                             input$user_dc))
+        
+        out_wx[1,c("DMC","DC")] <- data.frame(input$user_dmc,input$user_dc)
+        out_wx[1:which(out_wx$HOUR == "12")[1],c("DMC","DC","BUI")] <- data.frame("DMC"=input$user_dmc,"DC" = input$user_dc, "BUI"= cffdrs:::buildup_index(out_wx[1,"DMC"],out_wx[1,"DC"]))
+        
+        out_matchs <- data.frame(from=which(out_wx$HOUR == 13),to=c(which(out_wx$HOUR ==  12)[-1],nrow(out_wx)))
+        
+        for(i in seq(noon_wx$TEMP)){
+          out_wx[out_matchs[i,"from"]:out_matchs[i,"to"],c("DMC","DC","BUI")] <- noon_wx[i,c("DMC","DC","BUI")] 
+        }
+        
+        out_wx <- cffdrs::hffmc(out_wx,
+                      ffmc_old = input$user_ffmc,
+                      hourlyFWI = T)
+        names(out_wx) <- toupper(names(out_wx))
+    
+        showNotification("Hourly FWI Calculation Complete", type = "message")
+        return(out_wx)
+        
+      })
+      names(fwi_list) <- input$models
+      
+      cffdrs_list(fwi_list)
+      
+      list2env(fwi_list, envir = .GlobalEnv)
+      ## ---- build df ----
+      fwi_list <- Map(
+                function(df, nm) {
+                    df$source <- nm
+                    df
+                  },
+                fwi_list,
+          names(fwi_list)
+
+      )
+      
+      df <- bind_rows(lapply(fwi_list, function(x) {
+        
+        if(length(x) == 1){return(NULL)}
+        x$WD <- as.numeric(x$WD)
+        out <- x
+        out
+      }))
+      df$DATETIME <- lubridate::ymd_hm(paste0(as.Date(df$DATE,"%d/%m/%Y")," ",sprintf("%02d", df$HOUR),":00"))
+      coords <- sf::st_coordinates(get_point())
+      
+      df$lon <- coords[1,1]
+      df$lat <- coords[1,2]
+      
+      cffdrs_df(df)
+      })
+      
 }
 
 shinyApp(ui, server)
