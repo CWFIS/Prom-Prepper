@@ -32,7 +32,8 @@ if (!requireNamespace("BurnP3.HelpR", quietly = TRUE)) {
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(
   shiny, sf, terra, dplyr, lubridate, httr, glue, lutz, ggplot2, leaflet, 
-  cowplot, gridExtra, shinyFiles, fs,plotly, clock, readr, BurnP3.HelpR, DT)
+  cowplot, gridExtra, shinyFiles, fs,plotly, clock, readr, BurnP3.HelpR, DT,
+  bslib)
 
 # ---- Initiate shiny :) ----
 runApp()

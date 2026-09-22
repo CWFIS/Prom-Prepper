@@ -144,7 +144,12 @@ ui <- fluidPage(
                          selected = c("BUI","FWI")),
       actionButton("plot_fwi", "Plot FWI"),
       actionButton("save_fwi_plot", "Save FWI plot"),
-      actionButton("save_fwi", "Save FWI Calculation")
+      actionButton("save_fwi", "Save FWI Calculation"),
+      
+      ## ---- FireSTARR ----
+      
+      h4("FireSTARR"),
+      uiOutput("fs_panel")
     ),
     
     mainPanel(
@@ -176,6 +181,9 @@ server <- function(input, output, session){
   wx_raw <- reactiveVal(NULL)
   cffdrs_list <- reactiveVal(NULL)
   cffdrs_df <- reactiveVal(NULL)
+  has_fs <- reactiveVal(FALSE)
+  fs_dir <- paste0(Sys.getenv("USERPROFILE"),"\\FireSTARR")
+  fs <- paste0(fs_dir,"\\firestarr.exe")
   
   output$spot_plot <- renderPlotly({
     req(spot_plot_obj())
@@ -1720,7 +1728,57 @@ observeEvent(input$save_fwi, {
       
       cffdrs_df(df)
       })
-      
+  
+ # ---- FIRESTARR ----
+  
+  ## ---- FIRESTARR ----
+  
+  observe({
+    invalidateLater(5000, session)
+    has_fs(file.exists(fs))
+  })
+  output$fs_panel <- renderUI({
+    card(
+      card_header("FireSTARR Status"),
+      card_body(
+        if (has_fs()) {
+          tagList(
+            p("✅ FireSTARR installed."),
+            actionButton("use_fs", "Use FireSTARR",
+                         class = "btn-success")
+          )
+        } else {
+          tagList(
+            p("❌ FireSTARR missing."),
+            actionButton("get_fs", "Download FireSTARR",
+                         class = "btn-primary")
+          )
+        }
+      )
+    )
+  })
+  ## ---- Get FIRESTARR ----
+  
+  observeEvent(input$get_fs,{
+    download.file("https://github.com/CWFMF/firestarr-cpp/releases/download/v0.9.20/firestarr-windows-x64-cl-Release.zip",destfile = paste0(Sys.getenv("USERPROFILE"),"\\firestarr.zip"))
+    unzip(paste0(Sys.getenv("USERPROFILE"),"\\firestarr.zip"),exdir = fs_dir)
+  })
+  
+  ## ---- Use FIRESTARR ----
+  
+  observeEvent(input$use_fs,{
+    
+    ##TODO: This requires some thought. What do we need to run a model
+    ## Ignition Location - initial map click may not be the ignition location
+    ## Do we allow the user to change the location without impacting the map?
+    ## Fuels - Now we need to check the ignition location on the fuels to make
+    ## sure a fire can spread.
+    ## Weather - Calc'd just use it.
+    ## Elevation - Just pull it from the DL.
+    ## Parameters - how much user input do we want?
+    ## Prob / Deterministic / Both?
+    ## Save the outputs to the output folder and pull it up when done
+    
+})
 }
-
 shinyApp(ui, server)
