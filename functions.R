@@ -207,16 +207,14 @@ server <- function(input, output, session){
   
   # ---- INITIAL MAP ----
   output$map <- renderLeaflet({
-    
     leaflet() %>%
-      addProviderTiles("CartoDB.Positron") %>%
+      addTiles() %>%
       setView(
         lng = -96,
         lat = 62,
-        zoom = 2.5
+        zoom = 3
       )
   })
-  
   # ---- MAP UPDATE (POINT ONLY) ----
   observeEvent(point_event(), {
     
