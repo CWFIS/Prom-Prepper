@@ -127,15 +127,21 @@ ui <- fluidPage(
       
       ## FWI Values ===========================
       
-      h4("User Starting Codes"),
-      numericInput("user_ffmc",label = "FFMC:", value = ""),
-      numericInput("user_dmc",label = "DMC:", value = ""),
-      numericInput("user_dc",label = "DC:", value = ""),
-      hr(),
+
       
       h4("Starting Code Use"),
       radioButtons("index_source", "Source:",
-                   choices = c("User Defined", "Nearby Weather Station")),
+                   choices = c("User Defined", "Nearby Weather Station"),
+                   selected = "Nearby Weather Station"),
+      
+      conditionalPanel(
+        condition = "input.index_source == 'User Defined'",
+        h4("User Starting Codes"),
+        numericInput("user_ffmc",label = "FFMC:", value = ""),
+        numericInput("user_dmc",label = "DMC:", value = ""),
+        numericInput("user_dc",label = "DC:", value = ""),
+        hr()
+      ),
       
       h4("Calculate FWI"),
       actionButton("calc_fwi","Calculate FWI"),
@@ -144,7 +150,7 @@ ui <- fluidPage(
                          selected = c("BUI","FWI")),
       actionButton("plot_fwi", "Plot FWI"),
       actionButton("save_fwi_plot", "Save FWI plot"),
-      actionButton("save_fwi", "Save FWI Calculation")
+      actionButton("save_fwi", "Save FWI Calculation"),
     ),
     
     mainPanel(
@@ -1720,7 +1726,7 @@ observeEvent(input$save_fwi, {
       
       cffdrs_df(df)
       })
-      
+  
 }
 
 shinyApp(ui, server)
