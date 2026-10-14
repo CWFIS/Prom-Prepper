@@ -8,6 +8,11 @@ ui <- fluidPage(
       ## Fire Location ===========================
       
       h4("Fire Location"),
+      checkboxInput(
+        "edit_location",
+        "Select New Fire Location",
+        value = TRUE
+      ),
       radioButtons("loc_type", "Input method:",
                    choices = c("Map Click", "Lat/Long", "Upload Perim (kml)", "Upload Perim (.zip)")),
       
@@ -182,6 +187,11 @@ server <- function(input, output, session){
   wx_raw <- reactiveVal(NULL)
   cffdrs_list <- reactiveVal(NULL)
   cffdrs_df <- reactiveVal(NULL)
+  rv <- reactiveValues(
+    location_selected = FALSE,
+    selected_station = NULL,
+    fire_point = NULL
+  )
   
   output$spot_plot <- renderPlotly({
     req(spot_plot_obj())
@@ -300,6 +310,67 @@ server <- function(input, output, session){
         fillOpacity = 1,
         group = "Point"
       )
+  })
+  ## Inital Map Click =================================
+  observeEvent(input$map_click, {
+    
+    if (isTRUE(input$edit_location)) {
+      
+      rv$fire_point <- sf::st_as_sf(
+        data.frame(
+          lon = input$map_click$lng,
+          lat = input$map_click$lat
+        ),
+        coords = c("lon", "lat"),
+        crs = 4326
+      )
+      
+      rv$location_selected <- TRUE
+      
+      point_event(rv$fire_point)
+      
+      updateCheckboxInput(
+        session,
+        "edit_location",
+        value = FALSE
+      )
+    }
+    
+  })
+  
+
+  
+  ## Select Station Marker =================================
+  observeEvent(input$map_marker_click, {
+    
+    req(!isTRUE(input$edit_location))
+    
+    station_id <- input$map_marker_click$id
+    
+    req(!is.null(station_id))
+    
+    rv$selected_station <- station_id
+    
+    selected <- sf::st_transform(
+      wx_filtered(),
+      4326
+    ) |>
+      dplyr::filter(id == station_id)
+    
+    leafletProxy("map") %>%
+      clearGroup("selected") %>%
+      addCircleMarkers(
+        data = selected,
+        radius = 14,
+        color = "red",
+        fillColor = "yellow",
+        fillOpacity = 1,
+        weight = 3,
+        group = "selected",
+        label = ~name,
+        labelOptions = labelOptions(noHide = TRUE)
+      )
+    
   })
   
   # NBAC ===================================================
@@ -581,6 +652,20 @@ server <- function(input, output, session){
     )
   })
   
+  observeEvent(input$map_marker_click, {
+    
+    req(!isTRUE(input$edit_location))
+    
+    station_id <- input$map_marker_click$id
+    
+    req(!is.null(station_id))
+    
+    row_idx <- which(wx_filtered()$id == station_id)
+    
+    DT::dataTableProxy("starting_codes") %>%
+      DT::selectRows(row_idx)
+  })
+  
   observeEvent(input$starting_codes_rows_selected, {
     idx <- input$starting_codes_rows_selected
     req(length(idx) == 1)
@@ -616,7 +701,8 @@ server <- function(input, output, session){
         fillOpacity = 0.8,
         color = "darkblue",
         group = "Stations",
-        label = wx_filtered()$name,
+        layerId = ~id,
+        label = ~name,
         labelOptions = labelOptions(
           direction = "auto",
           permanent = FALSE,
@@ -633,12 +719,10 @@ server <- function(input, output, session){
         clearGroup("selected") %>%
         addCircleMarkers(
           data = selected,
-          lng = ~lon,
-          lat = ~lat,
           radius = 12,
           color = "red",
           fillColor = "yellow",
-          label = selected$name,
+          label = ~name,
           labelOptions = labelOptions(noHide=TRUE),
           fillOpacity = 1,
           group = "selected"
@@ -779,21 +863,7 @@ server <- function(input, output, session){
     ## 1. MAP CLICK=========================================================
     
     if (loc == "Map Click") {
-      
-      if (is.null(input$map_click)) {
-        return(NULL)
-      }
-      
-      return(
-        sf::st_as_sf(
-          data.frame(
-            lon = input$map_click$lng,
-            lat = input$map_click$lat
-          ),
-          coords = c("lon", "lat"),
-          crs = 4326
-        )
-      )
+      return(rv$fire_point)
     }
     
     # 2. LAT / LONG INPUT ==================================
