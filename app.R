@@ -264,7 +264,8 @@ server <- function(input, output, session){
   output$map <- renderLeaflet({
     
     leaflet() %>%
-      addProviderTiles("CartoDB.Positron") %>%
+      addTiles() %>%
+      #addProviderTiles("CartoDB.Positron") %>%
       setView(
         lng = -96,
         lat = 62,
@@ -537,11 +538,19 @@ server <- function(input, output, session){
         clearGroup("Stations") %>%
         addCircleMarkers(
           data = sf::st_transform(wx_filtered(), 4326),
-          radius = 4,
+          radius = 8,
           stroke = FALSE,
+          layerId = ~id,
           fillOpacity = 0.8,
           color = "darkblue",
-          group = "Stations"
+          group = "Stations",
+          label = wx_filtered()$name,
+          labelOptions = labelOptions(
+            direction = "auto",
+            permanent = FALSE,
+            opacity = 0.9,
+            textsize = "13px"
+          )
         )
     }
   )
@@ -596,8 +605,47 @@ server <- function(input, output, session){
       "user_dc",
       value = row$dc
     )
+    selected_row <- input$starting_codes_rows_selected
     
+    leafletProxy("map") %>%
+      clearGroup("Stations") %>%
+      addCircleMarkers(
+        data = sf::st_transform(wx_filtered(), 4326),
+        radius = 8,
+        stroke = FALSE,
+        fillOpacity = 0.8,
+        color = "darkblue",
+        group = "Stations",
+        label = wx_filtered()$name,
+        labelOptions = labelOptions(
+          direction = "auto",
+          permanent = FALSE,
+          opacity = 0.9,
+          textsize = "13px"
+        )
+      )
+    
+    if (length(selected_row) > 0) {
+      
+      selected <- sf::st_transform(wx_filtered(), 4326)[selected_row,]
+      
+      leafletProxy("map") %>%
+        clearGroup("selected") %>%
+        addCircleMarkers(
+          data = selected,
+          lng = ~lon,
+          lat = ~lat,
+          radius = 12,
+          color = "red",
+          fillColor = "yellow",
+          label = selected$name,
+          labelOptions = labelOptions(noHide=TRUE),
+          fillOpacity = 1,
+          group = "selected"
+        )
+    }
   })
+
   
   
 
@@ -991,7 +1039,7 @@ server <- function(input, output, session){
     tz <- lutz::tz_offset(Sys.Date(),tz)$utc_offset_h
     
     
-    model_run <- paste0(format(Sys.Date()-1,"%Y%m%d"),"_12Z")
+    model_run <- paste0(format(input$wx_date-1,"%Y%m%d"),"_12Z")
     
     #Hit the SpotWx API for data----
     
@@ -1119,7 +1167,7 @@ server <- function(input, output, session){
       )
       return()
     }
-    ## ---- build ggplots (NOT plotly yet) ----
+    ## ---- build ggplots ----
     plots <- lapply(seq_along(input$var), function(i) {
       
       var <- input$var[i]
@@ -1470,7 +1518,7 @@ server <- function(input, output, session){
     output$fwi_plot <- renderPlotly({
       subplot(
         fwi_plots,
-        nrows = 3,
+        nrows = if(length(input$fwi_var)<3){length(input$fwi_var)}else{3},
         shareX = TRUE,
         titleY = TRUE
       ) %>%
