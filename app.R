@@ -124,7 +124,6 @@ ui <- fluidPage(
                                      "CLOUD","GUST","DP", "1000_500MB_THICKNESS"),
                          selected = c("TMP","RH","WSPD","WDIR","PRECIP_ttl")),
       sliderInput("ndays", "Days", 1, 7, 3),
-      actionButton("plot_models", "Plot models"),
       actionButton("save_plot", "Save plot"),
       actionButton("save_spotwx", "Save selected models"),
       
@@ -153,7 +152,6 @@ ui <- fluidPage(
       checkboxGroupInput("fwi_var", "FWI Variables",
                          choices = c("FFMC","DMC","DC","ISI","BUI","FWI"),
                          selected = c("BUI","FWI")),
-      actionButton("plot_fwi", "Plot FWI"),
       actionButton("save_fwi_plot", "Save FWI plot"),
       actionButton("save_fwi", "Save FWI Calculation"),
     ),
@@ -163,9 +161,9 @@ ui <- fluidPage(
       h2("Starting Codes from Nearby Stations"),
       DTOutput(outputId = "starting_codes"),
       h2("Spot Wx Plots"),
-      plotlyOutput("spot_plot", height = 600),
+      plotlyOutput("spot_plot", height = "1000px"),
       h2("FWI Plots"),
-      plotlyOutput("fwi_plot", height = 600)
+      plotlyOutput("fwi_plot", height = "1000px")
     )
   )
 )
@@ -193,14 +191,6 @@ server <- function(input, output, session){
     fire_point = NULL
   )
   
-  output$spot_plot <- renderPlotly({
-    req(spot_plot_obj())
-    spot_plot_obj()
-  })
-  output$fwi_plot <- renderPlotly({
-    req(fwi_plot_obj())
-    fwi_plot_obj()
-  })
   output_dir <- reactive({
     req(input$outdir, nzchar(input$fire_name))
     
@@ -631,14 +621,10 @@ server <- function(input, output, session){
     wx_filtered() |>
       sf::st_drop_geometry() |>
       dplyr::select(
-        rep_date, wmo, name,
+        rep_date, name,elev,
         ffmc, dmc, dc,
         isi, bui, fwi
-      ) |>
-      dplyr::mutate(
-        row_id = dplyr::row_number(),
-        .before = 1
-      )
+      ) 
     
   })
   
@@ -836,9 +822,14 @@ server <- function(input, output, session){
       wx <- wx_filtered()
       
       # CSV export
-      wx_csv <- sf::st_coordinates(wx) |>
-        cbind(sf::st_drop_geometry(wx))
-      
+      wx_csv <- wx |>
+        sf::st_drop_geometry(wx) |>
+        dplyr::select(
+          rep_date, name,temp,rh,ws,wdir,precip,elev,
+          ffmc, dmc, dc,
+          isi, bui, fwi
+        ) 
+      wx_csv$rep_date
       write.csv(
         wx_csv,
         file = file.path(
@@ -1214,30 +1205,84 @@ server <- function(input, output, session){
     })
   })
   
-  observeEvent(input$plot_models, {
-
+  # SPOT Wx Plot =====================
+  output$spot_plot <- renderPlotly({
+    
     results <- spotwx_results()
-    if (is.null(results)) {
-      showNotification("No SpotWX results found. Please retrieve models first.", type = "error")
-      return()
-    }
+    req(results)
     
     req(input$var)
-    req(spotwx_df())
+    
     df <- spotwx_df()
+    req(df)
+    
     req(get_point())
     
     coords_now <- sf::st_coordinates(get_point())
     
-    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
-      showNotification(
-        "Location has changed. Please re-run 'Retrieve Models'.",
-        type = "error",
-        duration = 6
+    validate(
+      need(
+        df$lon[1] == coords_now[1,1] &&
+          df$lat[1] == coords_now[1,2],
+        "Location has changed. Please re-run Retrieve Models."
       )
-      return()
-    }
-    ## ---- build ggplots ----
+    )
+    
+    plots_plotly <- lapply(seq_along(input$var), function(i) {
+      
+      var <- input$var[i]
+      
+      p <- ggplot(df, aes(
+        x = DATETIME,
+        y = as.numeric(.data[[var]]),
+        color = model_elev
+      )) +
+        geom_line() +
+        labs(x = "", y = var) +
+        theme_minimal() +
+        scale_x_datetime(
+          limits = c(
+            min(df$DATETIME),
+            min(df$DATETIME) + lubridate::days(input$ndays)
+          ),
+          date_breaks = "1 day",
+          date_labels = "%b %d"
+        )
+      
+      ggplotly(p) %>%
+        style(showlegend = (i == 1))
+    })
+    
+    subplot(
+      plots_plotly,
+      nrows = ceiling(length(input$var) / 2),
+      shareX = TRUE,
+      titleY = TRUE,
+      margin = 0.08
+    ) %>%
+      layout(
+        legend = list(
+          orientation = "v",
+          x = 1.02,
+          y = 1,
+          xanchor= "left",
+          yanchor = "top"
+        ),
+        margin = list(    l = 60,
+                          r = 140,
+                          t = 30,
+                          b = 50)
+      )
+    
+  })
+  
+  observe({
+    
+    req(spotwx_df())
+    req(input$var)
+    
+    df <- spotwx_df()
+    
     plots <- lapply(seq_along(input$var), function(i) {
       
       var <- input$var[i]
@@ -1260,30 +1305,6 @@ server <- function(input, output, session){
           date_labels = "%b %d"
         )
     })
-    plots_plotly <- lapply(seq_along(input$var), function(i) {
-      
-      var <- input$var[i]
-      
-      p <- ggplot(df, aes(
-        x = DATETIME,
-        y = as.numeric(.data[[var]]),
-        color = model_elev
-      )) +
-        geom_line() +
-        labs(x = "", y = var) +
-        theme_minimal() +   
-        scale_x_datetime(
-          limits = c(
-            min(df$DATETIME),
-            min(df$DATETIME) + lubridate::days(input$ndays)
-          ),
-          date_breaks = "1 day",
-          date_labels = "%b %d"
-        )
-      
-      ggplotly(p) %>%
-        style(showlegend = (i == 1))   
-    })
     
     legend <- cowplot::get_legend(
       ggplot(df, aes(
@@ -1295,33 +1316,14 @@ server <- function(input, output, session){
         theme_minimal() +
         theme(legend.position = "right")
     )
-    ## ---- arrange ggplots ----
+    
     p_gg <- gridExtra::grid.arrange(
       grobs = c(plots, list(legend)),
       ncol = 3
     )
-    ## ---- STORE STATIC ggplot object ----
+    
     spot_plot_obj(p_gg)
     
-    ## ---- RENDER INTERACTIVE VERSION (separately) ----
-    output$spot_plot <- renderPlotly({
-      subplot(
-        plots_plotly,
-        nrows = 3,
-        shareX = TRUE,
-        titleY = TRUE
-      ) %>%
-        layout(
-          legend = list(
-            orientation = "v",
-            x = 1.02,
-            y = 1,
-            xanchor = "left",
-            yanchor = "top"
-          ),
-          margin = list(r = 120)
-        )
-    })
   })
   
   ## Save Spotwx Plots ===============
@@ -1495,30 +1497,75 @@ server <- function(input, output, session){
     showNotification("SpotWX saved successfully", type = "message")
   })
   # Plot FWI ===============
-  observeEvent(input$plot_fwi, {
+
+    output$fwi_plot <- renderPlotly({
+      
+      df <- cffdrs_df()
+
+      req(df)
+      req(input$fwi_var)
+      req(get_point())
+      
+      coords_now <- sf::st_coordinates(get_point())
+      
+      validate(
+        need(
+          df$lon[1] == coords_now[1,1] &&
+          df$lat[1] == coords_now[1,2],
+          "Location has changed. Please re-run Retrieve Models then press Calculate FWI."
+        )
+      )
+      
+      fwi_plots <- lapply(seq_along(input$fwi_var), function(i) {
+        
+        var <- input$fwi_var[i]
+        
+        p <- ggplot(df, aes(
+          x = DATETIME,
+          y = as.numeric(.data[[var]]),
+          color = source
+        )) +
+          geom_line() +
+          labs(x = "", y = var) +
+          theme_minimal() +
+          scale_x_datetime(
+            limits = c(
+              min(df$DATETIME),
+              min(df$DATETIME) + lubridate::days(input$ndays)
+            ),
+            date_breaks = "1 day",
+            date_labels = "%b %d"
+          )
+        
+        ggplotly(p) %>%
+          style(showlegend = (i == 1))
+      })
+      
+      subplot(
+        fwi_plots,
+        nrows = min(length(fwi_plots), 3),
+        shareX = TRUE,
+        titleY = TRUE,
+        margin = 0.08
+      ) %>%
+        layout(
+          margin = list(
+            l = 60,
+            r = 120,
+            t = 30,
+            b = 50
+          )
+        )
+      
+    })
+  
+  observe({
+    
+    req(cffdrs_df())
+    req(input$fwi_var)
     
     df <- cffdrs_df()
     
-    if (is.null(df)) {
-      showNotification("No FWI Calculation results found. Please retrieve models first.", type = "error")
-      return()
-    }
-    
-    req(input$fwi_var)
-    req(get_point())
-    
-    coords_now <- sf::st_coordinates(get_point())
-    
-    if (df$lon[1] != coords_now[1,1] || df$lat[1] != coords_now[1,2]) {
-      showNotification(
-        "Location has changed. Please re-run 'Retrieve Models'.",
-        type = "error",
-        duration = 6
-      )
-      return()
-    }
- 
-    ## ---- build ggplots (NOT plotly yet) ----
     plots <- lapply(seq_along(input$fwi_var), function(i) {
       
       var <- input$fwi_var[i]
@@ -1541,30 +1588,6 @@ server <- function(input, output, session){
           date_labels = "%b %d"
         )
     })
-    fwi_plots <- lapply(seq_along(input$fwi_var), function(i) {
-      
-      var <- input$fwi_var[i]
-      
-      p <- ggplot(df, aes(
-        x = DATETIME,
-        y = as.numeric(.data[[var]]),
-        color = source
-      )) +
-        geom_line() +
-        labs(x = "", y = var) +
-        theme_minimal() +   
-        scale_x_datetime(
-          limits = c(
-            min(df$DATETIME),
-            min(df$DATETIME) + lubridate::days(input$ndays)
-          ),
-          date_breaks = "1 day",
-          date_labels = "%b %d"
-        )
-      
-      ggplotly(p) %>%
-        style(showlegend = (i == 1))   
-    })
     
     legend <- cowplot::get_legend(
       ggplot(df, aes(
@@ -1576,36 +1599,16 @@ server <- function(input, output, session){
         theme_minimal() +
         theme(legend.position = "right")
     )
-    ## ---- arrange ggplots ----
+    
     p_gg <- gridExtra::grid.arrange(
       grobs = c(plots, list(legend)),
       ncol = 3
     )
-    ## ---- STORE STATIC ggplot object ----
+    
     fwi_plot_obj(p_gg)
     
-    ## ---- RENDER INTERACTIVE VERSION (separately) ----
-    output$fwi_plot <- renderPlotly({
-      subplot(
-        fwi_plots,
-        nrows = if(length(input$fwi_var)<3){length(input$fwi_var)}else{3},
-        shareX = TRUE,
-        titleY = TRUE
-      ) %>%
-        layout(
-          legend = list(
-            orientation = "v",
-            x = 1.02,
-            y = 1,
-            xanchor = "left",
-            yanchor = "top"
-          ),
-          margin = list(r = 120)
-        )
-    })
-    showNotification("FWI plotted successfully", type = "message")
   })
-
+  
   ## Save FWI Plots ===============
   
   observeEvent(input$save_fwi_plot, {
