@@ -333,6 +333,8 @@ server <- function(input, output, session){
   ## Select Station Marker =================================
   observeEvent(input$map_marker_click, {
     
+    req(nrow(wx_filtered()) > 0)
+    
     req(!isTRUE(input$edit_location))
     
     station_id <- input$map_marker_click$id
@@ -415,9 +417,11 @@ server <- function(input, output, session){
     
     nbac_plot <- nbac_filtered()
     
-    pal <- colorNumeric(
-      palette = c("#fde0ef", "#f768a1", "#ae017e"),
-      domain = nbac_plot$year
+    yrs <- sort(unique(nbac_plot$year), decreasing = TRUE)
+    
+    pal <- colorFactor(
+      palette = rev(c("#fde0ef", "#f768a1", "#ae017e")),
+      levels = yrs
     )
     
     leafletProxy("map") %>%
@@ -437,7 +441,7 @@ server <- function(input, output, session){
       addLegend(
         position = "bottomright",
         pal = pal,
-        values = nbac_plot$year,
+        values = factor(nbac_plot$year, levels = yrs),
         title = "NBAC Year",
         layerId = "nbac_legend"
       )
@@ -570,6 +574,14 @@ server <- function(input, output, session){
                       quiet = TRUE
     )
     
+    wx$rep_date <- as.POSIXct(
+      wx$rep_date,
+      tz = "UTC"
+    )
+    wx$name <- gsub("\\s\\s","",wx$name)
+    wx$name <- gsub("\\s$","",wx$name)
+    wx$name <- gsub("^\\s+","",wx$name)
+    wx$name <- gsub("[+]"," ",wx$name)
     wx_raw(wx)
   })
   
@@ -585,7 +597,48 @@ server <- function(input, output, session){
     
   })
   
+  observeEvent(rv$fire_point, {
+    
+    wx <- wx_filtered()
+    
+    if (nrow(wx) == 0) {
+      
+      showNotification(
+        paste(
+          "No weather stations were found near this location.",
+          "Please select a new fire location."
+        ),
+        type = "warning",
+        duration = NULL
+      )
+      
+      updateCheckboxInput(
+        session,
+        "edit_location",
+        value = TRUE
+      )
+      
+      rv$location_selected <- FALSE
+      rv$selected_station <- NULL
+      
+      leafletProxy("map") %>%
+        clearGroup("Stations") %>%
+        clearGroup("selected")
+      
+      return()
+    } else {
+    
+    # Success: stations found
+    updateCheckboxInput(
+      session,
+      "edit_location",
+      value = FALSE
+    )}
+    
+  })
+  
   observeEvent(
+    
     list(wx_filtered(), input$save_wx),
     {
       
@@ -618,14 +671,36 @@ server <- function(input, output, session){
   
   wx_table <- reactive({
     
-    wx_filtered() |>
-      sf::st_drop_geometry() |>
-      dplyr::select(
-        rep_date, name,elev,
-        ffmc, dmc, dc,
-        isi, bui, fwi
-      ) 
-    
+      required_cols <- c(
+        "rep_date", "name", "elev",
+        "ffmc", "dmc", "dc",
+        "isi", "bui", "fwi"
+      )
+      
+      df <- wx_filtered() |>
+        sf::st_drop_geometry()
+      
+      missing_cols <- setdiff(required_cols, names(df))
+      
+      if (length(missing_cols) > 0) {
+        
+        showNotification(
+          paste(
+            "Missing columns:",
+            paste(missing_cols, collapse = ", "),
+            "- filled with NA."
+          ),
+          type = "warning",
+          duration = 8
+        )
+        
+        for (col in missing_cols) {
+          df[[col]] <- NA
+        }
+      }
+      
+      df <- df |>
+        dplyr::select(dplyr::all_of(required_cols))
   })
   
   output$starting_codes <- renderDT({
@@ -640,6 +715,8 @@ server <- function(input, output, session){
   
   observeEvent(input$map_marker_click, {
     
+    req(nrow(wx_filtered()) > 0)
+    
     req(!isTRUE(input$edit_location))
     
     station_id <- input$map_marker_click$id
@@ -653,6 +730,7 @@ server <- function(input, output, session){
   })
   
   observeEvent(input$starting_codes_rows_selected, {
+    req(nrow(wx_filtered()) > 0)
     idx <- input$starting_codes_rows_selected
     req(length(idx) == 1)
     row <- wx_table()[idx, ]
@@ -818,6 +896,8 @@ server <- function(input, output, session){
     ## Wx Station Output
     
     if (isTRUE(input$save_wx)) {
+      
+      req(nrow(wx_filtered()) > 0)
       
       wx <- wx_filtered()
       
